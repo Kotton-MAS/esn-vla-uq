@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Reviewer findings",
+  "description": "reviewer 系サブエージェント (グローバル reviewer-* および プロジェクト固有 reviewer-uv) が返す JSON の共通スキーマ。fixer サブエージェントが機械的にパースするため、全 reviewer はこの形式に従うこと。",
+  "type": "object",
+  "required": ["agent", "verdict", "summary", "findings"],
+  "properties": {
+    "agent": {
+      "description": "reviewer の名前 (例: reviewer-uv, reviewer-security)",
+      "type": "string"
+    },
+    "verdict": {
+      "description": "全体判定。BLOCK: BLOCKER あり / WARN: HIGH あり / PASS: BLOCKER・HIGH なし",
+      "enum": ["BLOCK", "WARN", "PASS"]
+    },
+    "summary": {
+      "description": "3行以内の全体評価",
+      "type": "string"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "file", "issue", "fix"],
+        "properties": {
+          "severity": {
+            "enum": ["BLOCKER", "HIGH", "MEDIUM", "INFO"]
+          },
+          "file": {
+            "description": "リポジトリルートからの相対パス",
+            "type": "string"
+          },
+          "line": {
+            "description": "該当行番号。特定できない場合は null",
+            "type": ["integer", "null"]
+          },
+          "category": {
+            "description": "reviewer ごとに定義する観点カテゴリ",
+            "type": "string"
+          },
+          "issue": {
+            "description": "問題の説明",
+            "type": "string"
+          },
+          "fix": {
+            "description": "実行可能な具体的修正案 (例: `uv add --group dev pytest-mock` を実行)",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

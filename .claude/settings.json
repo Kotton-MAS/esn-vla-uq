@@ -1,0 +1,75 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv *)",
+      "Bash(git *)",
+      "Bash(python *)",
+      "Bash(pre-commit *)",
+      "Bash(make *)",
+      "Bash(pytest*)",
+      "Bash(ruff*)",
+      "Bash(mypy*)",
+      "Bash(gh pr *)",
+      "Bash(jq *)"
+    ],
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(sudo rm -rf *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "FILE=$(cat | jq -r '.tool_input.file_path // empty'); case \"$FILE\" in *.env.example) exit 0;; esac; if echo \"$FILE\" | grep -qE '(\\.env|\\.env\\..+|secrets|credentials|secret_key|private_key)$'; then echo '機密ファイルへの書き込みをブロックしました: '\"$FILE\" >&2; exit 2; fi"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CMD=$(cat | jq -r '.tool_input.command // empty'); if echo \"$CMD\" | grep -qE 'rm -rf /|sudo rm -rf'; then echo '危険なコマンドをブロックしました。より安全な方法を使用してください。' >&2; exit 2; fi"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "FILE=$(cat | jq -r '.tool_input.file_path // empty'); if [[ \"$FILE\" == *.py ]]; then REPO=$(git -C \"$(dirname \"$FILE\")\" rev-parse --show-toplevel 2>/dev/null); [ -n \"$REPO\" ] && cd \"$REPO\" && uv run ruff format \"$FILE\" 2>/dev/null || true; fi",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "コンテキストが圧縮されました。CLAUDE.mdを再確認してください。未完了のタスクや継続中の作業があれば、その状況を簡潔に報告してから作業を継続してください。"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "osascript -e 'display notification \"Claude が作業を完了しました\" with title \"Claude Code\"' 2>/dev/null || true",
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}
