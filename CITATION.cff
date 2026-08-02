@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "esn-vla-uq: Uncertainty quantification for VLA policies via Echo State Networks"
+abstract: >-
+  Closed-form, ensemble-free uncertainty quantification for vision-language-action
+  policies using Echo State Networks, with built-in reservoir diagnostics
+  (spectral radius, echo state property, memory capacity).
+type: software
+authors:
+  - family-names: Kotooka
+    given-names: Takumi
+version: 0.1.0.dev0
+date-released: "2026-08-02"
+license: Apache-2.0
+repository-code: "https://github.com/Kotton-MAS/esn-vla-uq"
+keywords:
+  - reservoir-computing
+  - echo-state-network
+  - uncertainty-quantification
+  - vision-language-action
+  - robot-learning

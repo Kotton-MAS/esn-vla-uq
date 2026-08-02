@@ -1,10 +1,28 @@
 [project]
-name = "template"
-version = "0.1.0"
-description = "Add your description here"
+name = "esn-vla-uq"
+version = "0.1.0.dev0"
+description = "Uncertainty quantification for VLA policies via Echo State Networks"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Takumi Kotooka" }]
+dependencies = [
+    "numpy>=2.5.1",
+]
+
+[project.scripts]
+esn-vla-uq = "esn_vla_uq.cli:main"
+
+[project.urls]
+Repository = "https://github.com/Kotton-MAS/esn-vla-uq"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/esn_vla_uq"]
 
 [dependency-groups]
 dev = [
@@ -17,7 +35,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+addopts = ["--strict-markers", "--strict-config"]
 
 [tool.ruff]
 target-version = "py312"
@@ -41,4 +59,6 @@ select = [
 strict = true
 # CLAUDE.md の「Any 禁止」を機械的に強制
 disallow_any_explicit = true
+# src レイアウト: mypy がインストール済みパッケージではなく src/ の実体を解決する
+mypy_path = ["src"]
 exclude = ["\\.venv"]
