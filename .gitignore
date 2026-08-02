@@ -8,18 +8,18 @@ __pycache__/
 
 # Distribution / packaging
 .Python
-build/
+/build/
 develop-eggs/
-dist/
-downloads/
-eggs/
+/dist/
+/downloads/
+/eggs/
 .eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
@@ -49,7 +49,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
-cover/
+/cover/
 
 # Translations
 *.mo
@@ -62,7 +62,7 @@ db.sqlite3
 db.sqlite3-journal
 
 # Flask stuff:
-instance/
+/instance/
 .webassets-cache
 
 # Scrapy stuff:
@@ -73,7 +73,7 @@ docs/_build/
 
 # PyBuilder
 .pybuilder/
-target/
+/target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -122,9 +122,9 @@ celerybeat.pid
 # Environments
 .env
 .venv
-env/
-venv/
-ENV/
+/env/
+/venv/
+/ENV/
 env.bak/
 venv.bak/
 
@@ -166,9 +166,35 @@ cython_debug/
 # uv.lock はビルド再現性のためコミット対象とする
 
 # Project outputs
-outputs/
-data/
+# リポジトリ直下のみを指す `/` 付きパターンにしている。無指定 (`data/`) だと
+# パッケージのソース `src/esn_vla_uq/data/` まで巻き込み、追跡対象から静かに外れる。
+/outputs/
+/data/
 # docs/ はエージェント成果物 (仕様書・ADR) の置き場のためコミット対象とする
+
+# Secrets (CLAUDE.md の「絶対禁止」= .env / 秘密鍵 / credentials.json のコミット
+# を .gitignore 側でも裏付ける。これらはどの階層に置かれても無視するため
+# 意図的にアンカーしない)。
+.env.*
+!.env.example
+*.env
+*credentials*.json
+*service-account*.json
+secrets.*
+.netrc
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+*.p12
+*.pfx
+
+# NOTE: ここに `!/src/**` のような包括的な否定パターンを置かないこと。
+# gitignore は後勝ちのため、それより前で定義した `.env` / 秘密鍵 /
+# `credentials.json` の除外まで src/ 配下で打ち消してしまう。
+# 「src/ 配下のソースが未アンカーのパターンに巻き込まれて静かに追跡外になる」
+# 事故は、上記のとおり各パターンを `/` でアンカーすることと、
+# `make src-not-ignored` (make ci に含まれる) の機械的チェックで防ぐ。
 
 
 .ruff_cache

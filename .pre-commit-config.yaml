@@ -49,14 +49,14 @@ repos:
       - id: shellcheck
 
   # md formatting
-  - repo: https://github.com/executablebooks/mdformat
+  # executablebooks/mdformat は hukkin/mdformat に移管済み (旧URLは301リダイレクトされるが直接参照する)
+  - repo: https://github.com/hukkin/mdformat
     rev: 1.0.0
     hooks:
       - id: mdformat
         args: ["--number"] # ファイル内の見出しに番号を自動的に付ける
         additional_dependencies:
-          - mdformat-gfm
-          - mdformat-tables
+          - mdformat-gfm # GFM 記法 (テーブル記法を含む) に対応
           - mdformat_frontmatter
           # - mdformat-toc  # 目次を自動生成する
           # - mdformat-black  # コードブロック内のコードをフォーマットする
@@ -68,7 +68,8 @@ repos:
       - id: codespell
         args:
           - --skip=logs/**,data/**,*.ipynb
-          # - --ignore-words-list=abc,def
+          # fro: np.linalg.norm(..., ord="fro") の Frobenius ノルム指定子。
+          - --ignore-words-list=fro
 
   # jupyter notebook cell output clearing
   - repo: https://github.com/kynan/nbstripout
