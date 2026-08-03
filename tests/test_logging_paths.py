@@ -19,15 +19,35 @@ def test_path_under_cwd_becomes_relative(
     assert display_path(target) == str(Path("outputs") / "report.json")
 
 
-def test_path_outside_cwd_becomes_filename_only(
+def test_path_outside_cwd_and_home_keeps_full_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """上位ディレクトリ名にもユーザー名や組織名が入りうるため部分的に残さない。"""
+    """ユーザー名を含まない場所は、書き出し先が分かるようそのまま出す。
+
+    消す対象はホームディレクトリの部分であって「場所」ではない。
+    """
     workdir = tmp_path / "work"
     workdir.mkdir()
     monkeypatch.chdir(workdir)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     outside = tmp_path / "elsewhere" / "report.json"
-    assert display_path(outside) == "report.json"
+    assert display_path(outside) == str(outside)
+
+
+def test_path_under_home_is_abbreviated_with_tilde(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ホーム配下は `~/...` にしてユーザー名だけを落とす。"""
+    home = tmp_path / "home" / "someone"
+    home.mkdir(parents=True)
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    monkeypatch.setenv("HOME", str(home))
+
+    rendered = display_path(home / "notes" / "report.json")
+    assert rendered == str(Path("~") / "notes" / "report.json")
+    assert "someone" not in rendered
 
 
 def test_relative_path_is_preserved(
@@ -42,10 +62,11 @@ def test_relative_path_is_preserved(
 def test_home_directory_is_never_exposed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`/home/<ユーザー名>/...` の形をログへ出さないこと。"""
+    """`/home/<ユーザー名>/...` の形をログへ出さないこと (S4 の核心)。"""
     monkeypatch.chdir(tmp_path)
     rendered = display_path(Path.home() / "secret_project" / "report.json")
     assert str(Path.home()) not in rendered
+    assert "secret_project" in rendered  # 場所は分かる
 
 
 def test_gen_sample_data_logs_no_absolute_path(
