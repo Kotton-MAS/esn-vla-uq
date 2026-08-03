@@ -5,6 +5,12 @@ Sprint 1（`feat/sprint1-esn-core`）の 7 観点並列レビューで検出さ�
 
 HIGH 12 件は Phase 4 で修正済み。以下は次スプリント以降の候補。
 
+`#` 列の ID は追跡用に固定する。解決済みの項目は行ごと削除し、ID の欠番は詰めない
+（S1・S6 は Sprint 1 で解決したため欠番）。
+
+**この文書は公開リポジトリに含まれる。** 非公開情報（第三者の実名、社内でのみ通用する
+呼称など）や、その検出パターンをここに書かないこと。書いた時点で除去の意味がなくなる。
+
 ## アーキテクチャ（Sprint 2 着手前にやると安い）
 
 | #   | 対象                                           | 内容                                                                                                                                                                                                                                                                                                                                                                               |
@@ -21,17 +27,15 @@ HIGH 12 件は Phase 4 で修正済み。以下は次スプリント以降の候
 
 ## セキュリティ（公開前に対応）
 
-| #   | 対象         | 内容                                                                                                                                                                                                                         |
-| --- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| S1  | `data/io.py` | `.npz` の配列サイズ無制限。zip 圧縮のため小さなファイルで OOM を起こせる（decompression bomb, CWE-409/789）。`MAX_TOTAL_STEPS` 等の上限を設ける                                                                              |
-| S2  | `data/io.py` | `save_dataset` が `.npz` だけでなくサイドカー `.json` まで無警告上書き。`--output notes.npz` が既存の無関係な `notes.json` を破壊する（CWE-73）。`overwrite: bool = False` + CLI `--force`                                   |
-| S3  | `cli/app.py` | `main()` に例外ハンドリングが無く、トレースバック（絶対パス・ユーザー名を含む）が stderr に出る。CLAUDE.md「エラーレスポンスにスタックトレースを含めない」に反する。公開後は issue への貼り付けで環境情報が漏れる（CWE-209） |
-| S4  | ログ全般     | 書き出し先の**絶対パス**を INFO ログに出している（`data/io.py`, `diagnostics/report.py`, `*/commands.py`）。ユーザー名が残る。INFO では相対パス、絶対パスは DEBUG へ                                                         |
-| S5  | `LICENSE`    | Apache-2.0 付録の `Copyright [yyyy] [name of copyright owner]` が未記入。権利帰属が不明確                                                                                                                                    |
-| S6  | git 履歴     | **push 前ゲート（下記に詳述）。要件書だけでなく `docs/plans/sprint1_v0.1.md` と `docs/design.md` の過去版にも内部語彙が残存**                                                                                                |
+| #   | 対象         | 内容                                                                                                                                                                                                                                                                                                                                             |
+| --- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| S2  | `data/io.py` | `save_dataset` が `.npz` だけでなくサイドカー `.json` まで無警告上書き。`--output notes.npz` が既存の無関係な `notes.json` を破壊する（CWE-73）。`overwrite: bool = False` + CLI `--force`                                                                                                                                                       |
+| S3  | `cli/app.py` | `main()` に例外ハンドリングが無く、トレースバック（絶対パス・ユーザー名を含む）が stderr に出る。CLAUDE.md「エラーレスポンスにスタックトレースを含めない」に反する。公開後は issue への貼り付けで環境情報が漏れる（CWE-209）                                                                                                                     |
+| S4  | ログ全般     | 書き出し先の**絶対パス**を INFO ログに出している（`data/io.py`, `diagnostics/report.py`, `*/commands.py`）。ユーザー名が残る。INFO では相対パス、絶対パスは DEBUG へ                                                                                                                                                                             |
+| S5  | `LICENSE`    | Apache-2.0 付録の `Copyright [yyyy] [name of copyright owner]` が未記入。権利帰属が不明確                                                                                                                                                                                                                                                        |
 | S7  | `data/io.py` | 出所固有バリデータを `io.py` がトップレベル import している。Sprint 2 で `source == "openpi"` の分岐を足すと `io.py` が openpi ログパーサを import することになり、「openpi をランタイム依存に含めない」の担保が import 構造ではなく規律のみになる。`data/invariants.py`（依存は `schema.py` のみ）へ切り出し、`io` はレジストリを引くだけにする |
-| S8  | pre-commit   | 秘密情報の防御が `detect-private-key`（PEM のみ）だけで、しかも pre-commit は `make ci` に含まれない。`.gitignore` は `git add -f` で無力化されるため、`gitleaks` を pre-commit に追加し `make ci` からも走らせて `.gitignore` の網羅性への依存を下げる |
-| S9  | dev 依存     | `pip-audit` が既知脆弱性 2 件を報告: pygments 2.19.2 (PYSEC-2026-2987, fix 2.20.0) / pytest 9.0.2 (PYSEC-2026-1845, fix 9.0.3)。dev グループのみで本番配布物（numpy のみ）には入らない。`make ci` に pip-audit を追加して自動検出させる |
+| S8  | pre-commit   | 秘密情報の防御が `detect-private-key`（PEM のみ）だけで、しかも pre-commit は `make ci` に含まれない。`.gitignore` は `git add -f` で無力化されるため、`gitleaks` を pre-commit に追加し `make ci` からも走らせて `.gitignore` の網羅性への依存を下げる                                                                                          |
+| S9  | dev 依存     | `pip-audit` が既知脆弱性 2 件を報告: pygments 2.19.2 (PYSEC-2026-2987, fix 2.20.0) / pytest 9.0.2 (PYSEC-2026-1845, fix 9.0.3)。dev グループのみで本番配布物（numpy のみ）には入らない。`make ci` に pip-audit を追加して自動検出させる                                                                                                          |
 
 ## パッケージング / uv
 
@@ -76,30 +80,3 @@ HIGH 12 件は Phase 4 で修正済み。以下は次スプリント以降の候
 | D1  | `esn/model.py`, `esn/readout.py` | 公開 API（`ESN.fit/predict/transform`, `RidgeReadout.fit/predict/design_matrix`）が一行 docstring のみ。diagnostics 層は Args/Returns/Raises 完備なので不整合。**利用者が最初に触る層こそ必要** |
 | D2  | `CHANGELOG.md`                   | 未作成。v0.1.0 タグ付け（Sprint 3）までに Keep a Changelog 形式で整備                                                                                                                           |
 | D3  | コミットメッセージ               | 「何を」の列挙が中心で「なぜ」が薄い。`Ref: docs/plans/sprint1_v0.1.md T4` のような設計文書への参照を入れる                                                                                     |
-
-## push 前ゲート（S6 の詳細・必須）
-
-このブランチはまだ push されていない（`origin/main` は Initial commit のみ、
-`git branch -r --contains 94dfd74` は空）。**今なら履歴書き換えのコストはゼロ**だが、
-一度 push すると GitHub 側にダングリングオブジェクトが残り `--force-with-lease` でも消えない
-（GitHub サポートへの GC 依頼か、リポジトリ削除＋再作成が必要になる）。
-
-非公開情報（第三者の実名、事業意図、特許ポジショニング、GPU 型番、社内でのみ通用する
-プログラム/演習の呼称）が複数コミットに残存しており、対象は要件書だけでなく
-`docs/plans/sprint1_v0.1.md` と `docs/design.md` にも及ぶ。
-
-**この文書自体に該当語を書かないこと。** 検出パターンは各自の手元で組み立てる
-（この文書は公開リポジトリに含まれるため、ここに列挙すると除去の意味がなくなる）。
-
-push 前に以下を完了させること:
-
-1. 履歴を書き換える。いずれかを選ぶ:
-   - Sprint 1 全体を 1 コミットへ squash する（最も単純）
-   - `git filter-repo --replace-text` で全履歴に対する語彙置換を行う
-   - `git rebase -i --root` で該当コミットの内容を公開版に差し替える
-2. **要件書だけを対象にしても不十分**。plans / design.md の過去版も対象に含めること
-3. 書き換え後に全履歴を再走査して空であることを確認する（`<pattern>` は手元で組み立てる）:
-   ```
-   git rev-list --all | while read c; do git grep -linE '<pattern>' $c; done
-   ```
-4. 上記が空になるまで `git push` を実行しない
