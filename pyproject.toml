@@ -7,6 +7,26 @@ requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [{ name = "Takumi Kotooka" }]
+# CITATION.cff の keywords と揃える (`make version-consistency` はバージョンのみ
+# 検査するため、こちらは目視で揃える)。
+keywords = [
+    "reservoir-computing",
+    "echo-state-network",
+    "uncertainty-quantification",
+    "vision-language-action",
+    "robot-learning",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 dependencies = [
     "numpy>=2.5.1",
 ]
@@ -24,13 +44,38 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/esn_vla_uq"]
 
+# sdist には「ソースからビルドし直せる」ものだけを入れる (U1)。既定では
+# .claude/ や .devcontainer/、7,000 行超の docs/ まで同梱されていた。
+# 設計文書はリポジトリで読むものであり、配布物に入れる理由がない。
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/CITATION.cff",
+    "/pyproject.toml",
+    "/Makefile",
+]
+
 [dependency-groups]
 dev = [
     "mypy>=1.19.1",
+    "pip-audit>=2.10.1",
     "pre-commit>=4.6.0",
-    "pytest>=9.0.2",
+    "pytest>=9.0.3",
     "pytest-cov>=7.0.0",
     "ruff>=0.15.4",
+]
+
+[tool.uv]
+# 推移的依存の既知脆弱性への対処 (S9)。pygments は pytest / rich (pip-audit) が
+# 引き込むだけで直接依存ではないため、`dependency-groups` に足さず制約で解決する。
+# `make ci` の `audit` ターゲットが pip-audit を実行するので、修正版が出た依存を
+# ここに書き忘れれば CI が落ちる。
+constraint-dependencies = [
+    "pygments>=2.20.0", # PYSEC-2026-2987
 ]
 
 [tool.pytest.ini_options]

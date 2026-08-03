@@ -21,6 +21,7 @@ from esn_vla_uq.esn.config import (
     DEFAULT_SPECTRAL_RADIUS,
     ESNConfig,
 )
+from esn_vla_uq.logging_paths import display_path
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,6 @@ def run_diagnose(args: argparse.Namespace) -> int:
         config.n_reservoir,
         seed,
         report.esp.verdict,
-        path,
+        display_path(path),
     )
     return 0

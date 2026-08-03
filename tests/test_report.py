@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +11,7 @@ import pytest
 
 from esn_vla_uq import __version__
 from esn_vla_uq.cli import main
+from esn_vla_uq.cli.app import EXIT_ERROR
 from esn_vla_uq.diagnostics import (
     REPORT_SCHEMA_VERSION,
     REPORT_SUBDIR,
@@ -279,9 +281,22 @@ def test_cli_diagnose_honours_skip_memory_capacity(tmp_path: Path) -> None:
     assert _section(payload, "esn_config")["leak_rate"] == 0.5
 
 
-def test_cli_diagnose_rejects_invalid_configuration(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="n_reservoir"):
-        main(["diagnose", "--n-reservoir", "0", "--output-dir", str(tmp_path)])
+def test_cli_diagnose_rejects_invalid_configuration(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """不正な設定は終了コード 1 とエラーログになる (S3)。
+
+    以前は `ValueError` が `main()` を素通りし、トレースバックが stderr に出て
+    いた。トレースバックはソースの絶対パスを含むため CLI 境界で捕まえる。
+    どのパラメータが不正かはメッセージに残す。
+    """
+    with caplog.at_level(logging.ERROR):
+        exit_code = main(
+            ["diagnose", "--n-reservoir", "0", "--output-dir", str(tmp_path)]
+        )
+    assert exit_code == EXIT_ERROR
+    assert "n_reservoir" in caplog.text
+    assert "Traceback" not in caplog.text
 
 
 def test_cli_diagnose_accepts_n_inputs(tmp_path: Path) -> None:

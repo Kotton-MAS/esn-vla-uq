@@ -42,6 +42,7 @@ from esn_vla_uq.diagnostics.memory_capacity import (
     MemoryCapacityResult,
 )
 from esn_vla_uq.esn.config import ESNConfig
+from esn_vla_uq.logging_paths import display_path
 from esn_vla_uq.provenance import SYNTHETIC_DATA_SOURCE, DataSource
 
 logger = logging.getLogger(__name__)
@@ -275,5 +276,7 @@ def write_report(report: DiagnosticsReport, output_dir: Path) -> Path:
         json.dumps(report.to_dict(), ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    logger.info("saved diagnostics report: path=%s", path)
+    # 絶対パスはユーザー名を含みうるため INFO には出さない (S4)。
+    logger.info("saved diagnostics report: path=%s", display_path(path))
+    logger.debug("saved diagnostics report: abs_path=%s", path)
     return path

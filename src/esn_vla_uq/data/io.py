@@ -68,6 +68,7 @@ from esn_vla_uq.data.schema import (
     check_npz_uncompressed_budget,
     validate_episode_index,
 )
+from esn_vla_uq.logging_paths import display_path
 from esn_vla_uq.provenance import DataSource
 
 logger = logging.getLogger(__name__)
@@ -135,13 +136,50 @@ def _concatenate(dataset: RolloutDataset) -> _ConcatenatedArrays:
     )
 
 
-def save_dataset(dataset: RolloutDataset, path: Path) -> Path:
+def _ensure_writable(archive_path: Path, *, overwrite: bool) -> None:
+    """書き出し先 2 ファイルが既存でないことを確認する (CWE-73 対策)。
+
+    `save_dataset` は `.npz` と**同名の `.json`** を書く。利用者が意識するのは
+    前者だけなので、`--output notes.npz` のような指定で、まったく無関係な既存の
+    `notes.json` が黙って壊れうる。書き出し前に両方を検査し、既存なら
+    `FileExistsError` にする。
+
+    Args:
+        archive_path: 書き出す `.npz` のパス。
+        overwrite: True なら既存ファイルの上書きを許可する。
+
+    Raises:
+        FileExistsError: `overwrite` が False で、いずれかが既に存在する場合。
+            サイドカーだけが存在するケース (本文の危険な例) も検出する。
+    """
+    if overwrite:
+        return
+    existing = [
+        target
+        for target in (archive_path, metadata_path_for(archive_path))
+        if target.exists()
+    ]
+    if existing:
+        names = ", ".join(sorted(target.name for target in existing))
+        raise FileExistsError(
+            f"出力先が既に存在します ({names})。上書きするには overwrite=True "
+            "(CLI では --force) を指定してください"
+        )
+
+
+def save_dataset(
+    dataset: RolloutDataset, path: Path, *, overwrite: bool = False
+) -> Path:
     """データセットを `.npz` + `.json` サイドカーに保存する。
 
     Args:
         dataset: 保存対象。保存前に `validate()` と出所別の追加検証
             (`invariants.validate_by_source`) を実行する。
         path: 出力する `.npz` のパス。サイドカーは同名の `.json`。
+        overwrite: 既存の `.npz` / サイドカー `.json` を上書きするか。既定は
+            False で、どちらかが存在すれば書き出す前に `FileExistsError`。
+            サイドカーの名前は `.npz` から導出されるため、利用者が意図して
+            いない既存ファイルを壊しうる (`_ensure_writable`)。
 
     Returns:
         書き出した `.npz` のパス。
@@ -149,8 +187,10 @@ def save_dataset(dataset: RolloutDataset, path: Path) -> Path:
     Raises:
         ValueError: データセットが不正、出所別の不変条件に違反、または
             パスが `.npz` でない場合。
+        FileExistsError: `overwrite=False` で出力先が既に存在する場合。
     """
     archive_path = _ensure_archive_path(path)
+    _ensure_writable(archive_path, overwrite=overwrite)
     dataset.validate()
     # 出所別の検証は元々 `_build_dataset` (読み込み側) からのみ
     # 呼ばれており、save 側は `dataset.validate()` (共通スキーマ契約) しか
@@ -177,13 +217,15 @@ def save_dataset(dataset: RolloutDataset, path: Path) -> Path:
         json.dumps(dataset.to_metadata(), ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    # 絶対パスはユーザー名を含みうるため INFO には出さない (S4)。
     logger.info(
         "saved rollout dataset: source=%s n_episodes=%d total_steps=%d path=%s",
         dataset.source,
         dataset.n_episodes,
         dataset.total_steps,
-        archive_path,
+        display_path(archive_path),
     )
+    logger.debug("saved rollout dataset: abs_path=%s", archive_path)
     return archive_path
 
 
