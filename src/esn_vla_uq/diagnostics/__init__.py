@@ -6,6 +6,9 @@
 
 本パッケージは `esn` 層が生成したリザバー (`W` / `W_in` / `b` と `ESNConfig`) を
 入力に取り、`esn` 層へ書き戻すことはしない。
+
+モジュール構成: `spectral` / `esp` / `memory_capacity` が個々の指標、`runner` が
+実行の組み立て、`report` が結果の表現 (レポート型・JSON・ログ) を担う。
 """
 
 from esn_vla_uq.diagnostics.esp import (
@@ -28,16 +31,18 @@ from esn_vla_uq.diagnostics.memory_capacity import (
     linear_memory_capacity,
 )
 from esn_vla_uq.diagnostics.report import (
-    DEFAULT_DIAGNOSTICS_N_INPUTS,
     REPORT_SCHEMA_VERSION,
     REPORT_SUBDIR,
     DiagnosticsReport,
     MemoryCapacityMeasurement,
     SpectralSummary,
-    run_diagnostics,
-    summarize_spectral,
     utc_timestamp,
     write_report,
+)
+from esn_vla_uq.diagnostics.runner import (
+    DEFAULT_DIAGNOSTICS_N_INPUTS,
+    run_diagnostics,
+    summarize_spectral,
 )
 from esn_vla_uq.diagnostics.spectral import (
     effective_spectral_radius,

@@ -22,7 +22,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Final, Literal
 
 import numpy as np
@@ -84,6 +84,18 @@ class EspResult:
     n_initial_states: int
     n_steps: int
     zero_input: bool
+
+    def to_dict(self) -> dict[str, object]:
+        """JSON シリアライズ可能な辞書へ変換する (診断レポート用)。
+
+        フィールドは `dataclasses.asdict` で列挙する。以前は
+        `diagnostics/report.py` が 12 個のフィールド名を手書きで並べており、
+        「3 指標を必ず併記する」という 4.2 節の要求が、レポート側の列挙が
+        この dataclass に追随し続けることに依存していた。指標を 1 つ足しても
+        mypy も pytest も落ちないまま JSON から欠落しうる状態だったため、
+        列挙をここへ寄せる (A2)。全フィールドが JSON 互換のスカラー。
+        """
+        return asdict(self)
 
 
 def default_test_inputs(

@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
+from esn_vla_uq.data.invariants import validate_synthetic_dataset
 from esn_vla_uq.data.schema import (
     ACTION_DIM,
     CHUNK_HORIZON,
@@ -24,7 +25,7 @@ from esn_vla_uq.data.schema import (
     Episode,
     RolloutDataset,
 )
-from esn_vla_uq.data.source import RolloutSource, SyntheticRolloutSource
+from esn_vla_uq.data.sources import RolloutSource, SyntheticRolloutSource
 from esn_vla_uq.data.synthetic import (
     CONTROL_HZ,
     DEFAULT_MAX_STEPS,
@@ -32,7 +33,6 @@ from esn_vla_uq.data.synthetic import (
     DEFAULT_N_EPISODES,
     POLICY_NAME,
     generate_dataset,
-    validate_synthetic_dataset,
 )
 
 MIN_VARIANCE_RATIO = 1.5

@@ -16,6 +16,11 @@
 5. 失敗エピソードでは ``failure_onset`` 以降に分布シフトを注入する
    (目標ドリフト / チャンク分散の増大 / グリッパ滑り)。
 
+合成データ固有の不変条件 (`validate_synthetic_dataset`) は `data/invariants.py`
+にある。不変条件の実装をこちら側に置くと、それを読み込み境界でも掛けたい
+`data/io.py` が本モジュール (将来は openpi ログパーサも) を import せざるを
+えなくなるため、依存の向きを逆にしている (S7)。
+
 難易度に関する設計上の注意 (仕様書 §8 リスク 2):
 チャンクノイズの基準スケールはエピソードごとに対数正規で散らしてあり、その散らばりは
 失敗時の分散増大より広い。したがって「チャンク分散のしきい値判定」という単純ベースライン
@@ -31,6 +36,7 @@ from typing import Final
 import numpy as np
 from numpy.typing import NDArray
 
+from esn_vla_uq.data.invariants import validate_synthetic_dataset
 from esn_vla_uq.data.schema import (
     ACTION_DIM,
     CHUNK_HORIZON,
@@ -279,35 +285,6 @@ def _success_flags(
     flags[:n_success] = True
     permuted: NDArray[np.bool_] = rng.permutation(flags)
     return permuted
-
-
-def validate_synthetic_dataset(dataset: RolloutDataset) -> None:
-    """合成データ生成器固有の不変条件を検証する。
-
-    「失敗エピソードには必ず `failure_onset` が付く」は `Episode.validate()`
-    (`data/schema.py`) が課す契約ではない。実 openpi ログの失敗エピソードには
-    `failure_onset` という概念自体が存在しないことがあるため、`Episode` レベル
-    の検証はこれを要求しない。この不変条件は合成データ生成器固有の追加契約
-    としてここで検証する。
-
-    `generate_dataset` の末尾で必ず呼ぶことに加え、`data/io.py` の
-    `load_dataset` / `load_bundled_sample` が `source == "synthetic"` の
-    データを読み戻す経路でも呼ぶこと (生成経路にしか掛からないと、保存
-    済みの破損データが読み込み時に素通りしてしまうため)。
-
-    Args:
-        dataset: 検証対象。`source` を問わず全エピソードを検査するが、呼び出し
-            側は通常 `dataset.source == "synthetic"` のときのみこの関数を呼ぶ。
-
-    Raises:
-        ValueError: 失敗エピソードに `failure_onset` が無い場合。
-    """
-    for episode in dataset.episodes:
-        if not episode.success and episode.failure_onset is None:
-            raise ValueError(
-                "failure_onset: 合成データセットの不変条件として、失敗エピソード"
-                f"には必須です (episode_id={episode.episode_id!r})"
-            )
 
 
 def _validate_arguments(

@@ -11,7 +11,7 @@ import logging
 from pathlib import Path
 
 from esn_vla_uq.data.io import save_dataset
-from esn_vla_uq.data.source import SyntheticRolloutSource
+from esn_vla_uq.data.sources import SyntheticRolloutSource
 from esn_vla_uq.data.synthetic import DEFAULT_N_EPISODES
 
 logger = logging.getLogger(__name__)

@@ -1,9 +1,15 @@
-"""診断レポートの構築・JSON 書き出し・人間可読サマリ。
+"""診断レポートの表現 (レポート型・JSON 書き出し・人間可読サマリ)。
+
+診断の**実行**は `diagnostics/runner.py` が担い、このモジュールは実行結果を
+どう表すかだけを扱う (A2)。JSON への変換は各結果型の `to_dict()` に委ねる
+(`ESNConfig` / `EspResult` / `MemoryCapacityResult` / `SpectralSummary`)。
+以前はこのモジュールが全フィールドを手書きで列挙していたため、結果型に
+フィールドを足しても JSON からは黙って欠落した。
 
 収録内容は `docs/design.md` の 4.4 節に従う (ただし `n_inputs` は当初の設計に
-なかった追加フィールド。詳細は `run_diagnostics` の docstring を参照)。JSON
-本体はファイルへ書き出し、`logging.info` では 1 指標 1 行のサマリのみを出す
-(`print()` は使わない)。
+なかった追加フィールド。詳細は `runner.run_diagnostics` の docstring を参照)。
+JSON 本体はファイルへ書き出し、`logging.info` では 1 指標 1 行のサマリのみを
+出す (`print()` は使わない)。
 
 `data_source` は Sprint 1 では常に ``"synthetic"``。本レポートの数値は同梱の
 合成データと同じ合成的な設定に由来し、実 LIBERO 評価の結果ではない
@@ -25,23 +31,18 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, Literal
 
-import numpy as np
-
-from esn_vla_uq import __version__
-from esn_vla_uq.diagnostics.esp import EspResult, check_esp
+from esn_vla_uq.diagnostics.esp import EspResult
 from esn_vla_uq.diagnostics.memory_capacity import (
     MEMORY_CAPACITY_INPUT_DIM,
     MemoryCapacityResult,
-    linear_memory_capacity,
 )
-from esn_vla_uq.diagnostics.spectral import effective_spectral_radius, spectral_radius
 from esn_vla_uq.esn.config import ESNConfig
-from esn_vla_uq.esn.reservoir import Reservoir
+from esn_vla_uq.provenance import SYNTHETIC_DATA_SOURCE, DataSource
 
 logger = logging.getLogger(__name__)
 
@@ -56,10 +57,9 @@ REPORT_SCHEMA_VERSION: Final[str] = "0.2.0"
 REPORT_SUBDIR: Final[str] = "diagnostics"
 """`--output-dir` 配下の書き出し先サブディレクトリ。"""
 
-DataSource = Literal["synthetic", "openpi"]
-"""数値の出所。Sprint 1 は常に ``"synthetic"``。"""
-
-SYNTHETIC_DATA_SOURCE: Final[DataSource] = "synthetic"
+# `DataSource` / `SYNTHETIC_DATA_SOURCE` の実体は `esn_vla_uq.provenance` に
+# ある (A4)。以前はこのモジュールと `data/schema.py` がそれぞれ独立に同じ
+# Literal を定義しており、出所を 1 つ増やすと片方だけ古いまま残りえた。
 
 
 def utc_timestamp(moment: datetime | None = None) -> str:
@@ -122,6 +122,23 @@ class MemoryCapacityMeasurement:
         測ったかを返す。"""
         return "shared" if self.n_inputs == report_n_inputs else "separate"
 
+    def to_dict(self, report_n_inputs: int) -> dict[str, object]:
+        """測定コンテキストを埋め込んだ自己記述的な辞書を返す。
+
+        測定値そのものの列挙は `MemoryCapacityResult.to_dict()` に委ね、ここは
+        「どのリザバーで測ったか」(`n_inputs` / `reservoir`) を足すだけにする
+        (A2)。
+
+        Args:
+            report_n_inputs: レポートの `spectral`/`esp` を計算したリザバーの
+                入力次元。`reservoir` ラベルの判定に使う。
+        """
+        return {
+            **self.result.to_dict(),
+            "n_inputs": self.n_inputs,
+            "reservoir": self.reservoir_label(report_n_inputs),
+        }
+
 
 @dataclass(frozen=True)
 class SpectralSummary:
@@ -135,6 +152,10 @@ class SpectralSummary:
 
     spectral_radius: float
     effective_spectral_radius: float
+
+    def to_dict(self) -> dict[str, object]:
+        """JSON シリアライズ可能な辞書へ変換する (A2)。"""
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -176,16 +197,13 @@ class DiagnosticsReport:
             "data_source": self.data_source,
             "seed": self.seed,
             "n_inputs": self.n_inputs,
-            "esn_config": _config_to_dict(self.esn_config),
-            "spectral": {
-                "spectral_radius": self.spectral.spectral_radius,
-                "effective_spectral_radius": self.spectral.effective_spectral_radius,
-            },
-            "esp": _esp_to_dict(self.esp),
+            "esn_config": self.esn_config.to_dict(),
+            "spectral": self.spectral.to_dict(),
+            "esp": self.esp.to_dict(),
             "memory_capacity": (
                 None
                 if self.memory_capacity is None
-                else _memory_capacity_to_dict(self.memory_capacity, self.n_inputs)
+                else self.memory_capacity.to_dict(self.n_inputs)
             ),
         }
 
@@ -238,139 +256,6 @@ class DiagnosticsReport:
             result.n_delays,
             reservoir_note,
         )
-
-
-def _config_to_dict(config: ESNConfig) -> dict[str, object]:
-    """`ESNConfig` の全フィールドを辞書にする。"""
-    return {
-        "n_reservoir": config.n_reservoir,
-        "spectral_radius": config.spectral_radius,
-        "input_scaling": config.input_scaling,
-        "bias_scaling": config.bias_scaling,
-        "leak_rate": config.leak_rate,
-        "density": config.density,
-        "ridge_alpha": config.ridge_alpha,
-        "washout": config.washout,
-        "input_passthrough": config.input_passthrough,
-        "seed": config.seed,
-    }
-
-
-def _esp_to_dict(result: EspResult) -> dict[str, object]:
-    """`EspResult` の全フィールドを辞書にする (3 指標を必ず併記)。"""
-    return {
-        "verdict": result.verdict,
-        "sufficient_condition_met": result.sufficient_condition_met,
-        "necessary_condition_met": result.necessary_condition_met,
-        "empirical_converged": result.empirical_converged,
-        "decay_rate": result.decay_rate,
-        "largest_singular_value": result.largest_singular_value,
-        "effective_spectral_radius": result.effective_spectral_radius,
-        "final_distance": result.final_distance,
-        "tolerance": result.tolerance,
-        "n_initial_states": result.n_initial_states,
-        "n_steps": result.n_steps,
-        "zero_input": result.zero_input,
-    }
-
-
-def _memory_capacity_to_dict(
-    measurement: MemoryCapacityMeasurement, report_n_inputs: int
-) -> dict[str, object]:
-    """`MemoryCapacityMeasurement` を、測定コンテキストを埋め込んだ自己記述的な
-    辞書にする (`n_inputs` / `reservoir`)。"""
-    result = measurement.result
-    return {
-        "total_mc": result.total_mc,
-        "mc_per_neuron": result.mc_per_neuron,
-        "memory_horizon": result.memory_horizon,
-        "n_delays": result.n_delays,
-        "per_delay": list(result.per_delay),
-        "n_inputs": measurement.n_inputs,
-        "reservoir": measurement.reservoir_label(report_n_inputs),
-    }
-
-
-def summarize_spectral(reservoir: Reservoir) -> SpectralSummary:
-    """リザバーからスペクトル指標を計算する。"""
-    return SpectralSummary(
-        spectral_radius=spectral_radius(reservoir.W),
-        effective_spectral_radius=effective_spectral_radius(
-            reservoir.W, reservoir.config.leak_rate
-        ),
-    )
-
-
-DEFAULT_DIAGNOSTICS_N_INPUTS: Final[int] = 1
-"""`run_diagnostics` の既定入力次元 (`--n-inputs` の既定値)。"""
-
-
-def run_diagnostics(
-    config: ESNConfig,
-    *,
-    n_inputs: int = DEFAULT_DIAGNOSTICS_N_INPUTS,
-    seed: int | None = None,
-    skip_memory_capacity: bool = False,
-    generated_at: str | None = None,
-) -> DiagnosticsReport:
-    """スペクトル / ESP / メモリ容量を実行して `DiagnosticsReport` を組み立てる。
-
-    ``spectral`` / ``esp`` は入力次元 ``n_inputs`` のリザバー 1 個で計算する
-    (行列の生成は `ESNConfig.seed` と入力次元の両方に依存するため、指標間で
-    別のリザバーを見てしまわないよう同じリザバーを使い回す)。既定
-    ``n_inputs=1`` は互換のための既定値であり、実データを fit する ESN の
-    実際の `D_u` (例: `state` なら 8) に近づけたい場合は明示的に指定する。
-
-    メモリ容量診断はスカラー入力 (`D_u=1`) を要求する。``n_inputs == 1`` の
-    ときは上記と同じリザバーをそのまま使うが、``n_inputs != 1`` のときは
-    `spectral`/`esp` のリザバーとは別に `D_u=1` のリザバーを ``config`` から
-    改めて構築して測る (同じ `seed` でも `n_inputs` が違えば `W_in`/`b`/`W` は
-    別物になるため、一診断の都合でレポート全体のリザバーを決めない)。
-    どちらのリザバーで測ったかは `MemoryCapacityMeasurement.n_inputs`
-    (`DiagnosticsReport.memory_capacity.n_inputs`) に必ず記録する。
-
-    Args:
-        config: 診断対象の ESN ハイパーパラメータ。
-        n_inputs: `spectral`/`esp` を計算するリザバーの入力次元 `D_u`。
-        seed: 診断の乱数種 (テスト入力・初期状態・メモリ容量入力)。省略時は
-            `ESNConfig.seed` を使う。
-        skip_memory_capacity: True なら K 本の read-out 学習を伴うメモリ容量
-            診断を省略する (レポートでは ``null``)。
-        generated_at: タイムスタンプの明示指定 (テスト用)。省略時は現在時刻。
-
-    Returns:
-        3 指標を収録した `DiagnosticsReport`。
-    """
-    diagnostics_seed = config.seed if seed is None else seed
-    reservoir = Reservoir(config, n_inputs)
-
-    memory_capacity: MemoryCapacityMeasurement | None = None
-    if not skip_memory_capacity:
-        memory_capacity_reservoir = (
-            reservoir
-            if n_inputs == MEMORY_CAPACITY_INPUT_DIM
-            else Reservoir(config, MEMORY_CAPACITY_INPUT_DIM)
-        )
-        memory_capacity = MemoryCapacityMeasurement(
-            result=linear_memory_capacity(
-                memory_capacity_reservoir, seed=diagnostics_seed
-            ),
-            n_inputs=MEMORY_CAPACITY_INPUT_DIM,
-        )
-
-    return DiagnosticsReport(
-        schema_version=REPORT_SCHEMA_VERSION,
-        generated_at=utc_timestamp() if generated_at is None else generated_at,
-        package_version=__version__,
-        numpy_version=np.__version__,
-        esn_config=config,
-        seed=diagnostics_seed,
-        n_inputs=n_inputs,
-        spectral=summarize_spectral(reservoir),
-        esp=check_esp(reservoir, seed=diagnostics_seed),
-        memory_capacity=memory_capacity,
-        data_source=SYNTHETIC_DATA_SOURCE,
-    )
 
 
 def write_report(report: DiagnosticsReport, output_dir: Path) -> Path:

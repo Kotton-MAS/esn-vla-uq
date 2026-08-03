@@ -18,10 +18,12 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Final, Literal, get_args
+from typing import Final
 
 import numpy as np
 from numpy.typing import NDArray
+
+from esn_vla_uq.provenance import SUPPORTED_SOURCES, DataSource
 
 SCHEMA_VERSION: Final[str] = "0.1.0"
 """現在のスキーマバージョン。"""
@@ -74,10 +76,9 @@ MAX_DATASET_BYTES: Final[int] = 2 * 1024**3
 で npz アーカイブ全体の非圧縮サイズ合計を同じ上限と比較して検証する。
 """
 
-DataSource = Literal["synthetic", "openpi"]
-"""データの出所。合成データを実ロールアウトと誤読させないための必須メタデータ。"""
-
-SUPPORTED_SOURCES: Final[tuple[str, ...]] = get_args(DataSource)
+# `DataSource` / `SUPPORTED_SOURCES` の実体は `esn_vla_uq.provenance` にある
+# (A4)。このモジュールは両者を使うため import しており、結果として
+# `esn_vla_uq.data.schema` 経由でも従来どおり参照できる。
 
 
 # `np.generic` は型スタブ上のみ総称型で実行時には添字を取れない。PEP 695 の

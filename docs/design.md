@@ -39,7 +39,7 @@ ______________________________________________________________________
 
 - **Phase 1 以降**: 物理リザバー・メモリスタ実装。ソフト ESN での実証が先。
 - **四足歩行・ロコモーションへの横展開**: v0.2 以降。
-- **π0 以外の VLA 対応**（SmolVLA, GR00T 等）: データ収集層 (`data/source.py` の
+- **π0 以外の VLA 対応**（SmolVLA, GR00T 等）: データ収集層 (`data/sources/` の
   `RolloutSource` Protocol) は将来対応を見越して抽象化するが、v0.1 では実装しない。
 - **リアルタイム介入**: 不確実性による実行停止・リカバリは行わない。検知のみ。
 - **ハイパーパラメータの網羅的探索**: v0.1 は「動いて診断結果が出る」ことが目的であり、
@@ -52,7 +52,7 @@ ______________________________________________________________________
 ### 2.1 openpi との疎結合
 
 openpi はランタイム依存に含めない。openpi 側のロールアウトログは
-`esn_vla_uq.data.source.RolloutSource` Protocol を実装するアダプタ（Sprint 2 の
+`esn_vla_uq.data.sources.RolloutSource` Protocol を実装するアダプタ（Sprint 2 の
 `OpenpiLogSource`）経由でのみ取り込む。これにより openpi の破壊的変更から本パッケージを
 絶縁する（要件書「技術的制約」節）。
 
@@ -65,10 +65,18 @@ graph TD
         SYN["合成データ生成<br/>data/synthetic.py"]
     end
 
+    subgraph base["最下層 (依存を持たない)"]
+        LINALG["linalg.py<br/>spectral_radius / sigma_max"]
+        PROV["provenance.py<br/>DataSource"]
+    end
+
     subgraph data["data 層"]
-        SRC["source.py<br/>RolloutSource Protocol"]
         SCHEMA["schema.py<br/>Episode / RolloutDataset"]
+        INV["invariants.py<br/>出所別の不変条件"]
+        SRCBASE["sources/base.py<br/>RolloutSource Protocol"]
+        SRCSYN["sources/synthetic.py<br/>SyntheticRolloutSource"]
         IO["io.py<br/>npz + metadata.json"]
+        FEAT["features.py<br/>ESN 入力への変換"]
     end
 
     subgraph esn["esn 層"]
@@ -81,7 +89,8 @@ graph TD
         SPEC["spectral.py"]
         ESP["esp.py"]
         MC["memory_capacity.py"]
-        REPORT["report.py"]
+        RUNNER["runner.py<br/>実行の組み立て"]
+        REPORT["report.py<br/>レポート型 / JSON / ログ"]
     end
 
     subgraph future["Sprint 2 以降 (未スキャフォールド)"]
@@ -89,37 +98,68 @@ graph TD
         CAL["calibration/<br/>reliability diagram / ECE"]
     end
 
-    OPENPI -. "Sprint 2: OpenpiLogSource" .-> SRC
-    SYN --> SCHEMA
-    SRC --> SCHEMA --> IO
-    IO --> MODEL
+    PROV --> SCHEMA
+    PROV --> REPORT
+    LINALG --> RES
+    LINALG --> SPEC
+
+    OPENPI -. "Sprint 2: sources/openpi.py" .-> SRCBASE
+    SYN --> SRCSYN
+    SCHEMA --> INV --> IO
+    SCHEMA --> SRCBASE
+    SCHEMA --> FEAT
+    SCHEMA --> IO
+    IO --> FEAT
+    FEAT --> RES
     RES --> MODEL
     RO --> MODEL
     MODEL --> SPEC & ESP & MC
-    SPEC --> REPORT
-    ESP --> REPORT
-    MC --> REPORT
-    MODEL -. "Sprint 2" .-> UQ -. "Sprint 2" .-> CAL
+    SPEC --> RUNNER
+    ESP --> RUNNER
+    MC --> RUNNER
+    RUNNER --> REPORT
+    FEAT -. "Sprint 2" .-> UQ -. "Sprint 2" .-> CAL
 
-    CLI["cli/app.py<br/>diagnose / gen-sample-data"] --> SRC
+    CLI["cli/app.py<br/>diagnose / gen-sample-data"] --> SRCSYN
     CLI --> MODEL
-    CLI --> REPORT
+    CLI --> RUNNER
 ```
 
 モジュール境界の契約:
 
+- **最下層（`linalg.py` / `provenance.py`）**: どちらも本パッケージの他モジュールを
+  import しない。複数の層が同じ定義を必要とするとき、片方の層に置いて他方から
+  import すると層をまたぐ辺が生まれるため、ここへ置く。
+  `linalg.spectral_radius` は `esn/reservoir.py`（`W` のスケーリング）と
+  `diagnostics/spectral.py`（診断値）が**同一の実装**を共有するための場所であり、
+  「設定した rho が達成されているか」を実測で検証するという診断の意味は、この
+  同一性に依存する（`tests/test_linalg.py` が同一性そのものを固定している）。
+  `provenance.DataSource` は `data` 層と `diagnostics` 層の両方が使う。
 - **data → esn**: `esn` 層は `RolloutDataset` を直接知らない。`esn.model.ESN.fit/predict` は
-  `numpy.typing.NDArray[np.float64]` のみを受け取る。dataset からの配列取り出しは呼び出し側
-  （CLI または将来の `uncertainty` 層）の責務。
+  `numpy.typing.NDArray[np.float64]` のみを受け取る。dataset から ESN 入力への変換は
+  `data/features.py` の `dataset_inputs` に一本化する（3.9 節）。呼び出し側が
+  各自で配列を組み立てることはしない。
 - **esn → diagnostics**: レイヤ順は data → esn → diagnostics であり、`diagnostics` が
   `esn` の公開 API（`esn.reservoir.Reservoir`、`esn.readout.RidgeReadout`、
   `esn.config.ESNConfig`）に依存するのは**正方向の依存**として許可する
-  （`diagnostics/esp.py`・`diagnostics/memory_capacity.py`・`diagnostics/report.py` は
+  （`diagnostics/esp.py`・`diagnostics/memory_capacity.py`・`diagnostics/runner.py` は
   いずれも `Reservoir` を import して使う）。逆に **`esn` 層が `diagnostics` に依存する
   ことは禁止**する。この境界を守れば、状態更新式やリッジ解を `diagnostics` 側で
   再実装せずに済む。
 - **openpi との境界**: `RolloutSource.load() -> RolloutDataset` が唯一の契約点。
-  実装の詳細（openpi の policy server API 等）は `data.source` 配下に閉じ込める。
+  実装の詳細（openpi の policy server API 等）は `data/sources/openpi.py`（Sprint 2）に
+  閉じ込める。抽象（`sources/base.py`）と具象（`sources/synthetic.py` 等）を分ける
+  のは、Protocol を参照するだけの利用側が具象パーサをロードしないためである。
+  同じ理由で、出所ごとの不変条件は具象パーサ側ではなく `data/invariants.py`
+  （依存は `schema.py` と `provenance.py` のみ）に置き、`io.py` はレジストリを
+  引くだけにする。`io.py` が具象パーサを import する形だと、`source == "openpi"` の
+  分岐を足した時点で `io.py` が openpi に依存する。
+  **この境界が実際に守られているかは `tests/test_layering.py` が検査する。**
+  ただし保証の範囲には限界がある: `esn_vla_uq/data/__init__.py` が公開 API を
+  再エクスポートしているため、`data` 配下のどれか 1 つを import すれば合成データ
+  生成器はロードされる。テストが守っているのは (1) `io.py` / `invariants.py` /
+  `sources/base.py` が具象を import 文として持たないこと、(2) 任意依存
+  （openpi）を持つ供給元がどの経路からもロードされないこと、の 2 点である。
 - **I/O とロギングの一元化**: 出力先パス（`--output-dir` 等）の決定は `cli/app.py` と
   各サブコマンドの `*_commands.py`（`diagnostics/commands.py` / `data/commands.py`）が
   担う。実際のファイル書き込みは各層の永続化モジュールに委ねる
@@ -287,6 +327,38 @@ W_out = solve(X^T X + Λ, X^T Y)      # np.linalg.solve を使う（np.linalg.in
   将来 `N` を大きくする要求が出た場合は疎行列・反復法（scipy 等）の導入を検討する
   （第 8 節「未解決の設計論点」）。
 
+### 3.9 ロールアウトから ESN 入力への変換とエピソード境界
+
+`RolloutDataset` は永続化と検証のための形（エピソードのリスト）であり、ESN が必要と
+する形（`[T, D_u]` の float64 配列）とは違う。この変換は `data/features.py` の
+`dataset_inputs` に一本化する。呼び出し側ごとに実装させると、以下 2 つの判断が
+実装ごとにばらつくためである。
+
+**エピソード境界でリザバー状態をリセットする。** エピソードは互いに独立した試行で
+あり、直前のエピソード末尾の状態を次のエピソードへ持ち越すと、実際には観測して
+いない過去に依存した特徴量になる。連結済み配列を `Reservoir.run` にそのまま渡すと
+まさにそれが起きる。したがって:
+
+- `dataset_inputs` はエピソードごとに切り出した区間の列（`DatasetInputs.segments`）を
+  第一級の表現として返す。
+- `esn.reservoir.run_episodes(reservoir, segments)` が区間ごとに初期状態から駆動し、
+  結果を連結して `[T_total, N]` を返す。
+- 連結済みの `DatasetInputs.values` を直接 `Reservoir.run` に渡してはならない。
+
+これは「どちらでも動くが片方が誤り」という種類の選択であり、静かに間違えたときに
+数値だけを見ても気づけない。`tests/test_features.py` は、区間ごとの駆動と連結配列の
+一括駆動が**異なる結果になる**ことを固定している（一致するならこの選択に意味が
+無いことになる）。
+
+**NaN はこの層で埋めない。** `state` / `action` は `Episode.validate()` の
+`check_all_finite` により有限性が保証されているため、`FeatureSet`（`"state"` /
+`"action"` / `"state_action"`）が返す入力に NaN は入らない。NaN を含みうるのは
+`action_chunk` だけで、非推論ステップは全要素 NaN と定義されている（5.1 節）。
+したがってチャンク由来の特徴量は `is_inference_step` が真のステップでのみ定義され、
+`DatasetInputs.is_inference_step` を通じて呼び出し側に渡す。NaN を 0 などで埋めると
+「予測が無かった」と「予測が 0 だった」が区別できなくなるため、この層では埋めない。
+チャンク由来の特徴量設計そのものは Sprint 2 の作業とする。
+
 ______________________________________________________________________
 
 ## 4. 診断指標の定義
@@ -381,7 +453,7 @@ Jaeger (2001) の線形メモリ容量 (linear memory capacity) を採用する
 `linear_memory_capacity(reservoir, ...)` 自体は常にスカラー入力（`D_u=1`）の
 `reservoir` を要求する（`n_inputs != 1` なら `ValueError`）。`spectral`/`esp` を計算する
 リザバーと同じものを使うか、別の `D_u=1` リザバーを新たに構築するかの分岐は、この
-モジュールではなく呼び出し側の `diagnostics/report.py`（`run_diagnostics`）が
+モジュールではなく呼び出し側の `diagnostics/runner.py`（`run_diagnostics`）が
 `--n-inputs == 1` かどうかで判断する（`n_inputs == 1` なら再利用、`n_inputs != 1` なら
 `config` から別途 `D_u=1` のリザバーを構築する。詳細は 4.4 節）。
 
@@ -426,23 +498,36 @@ Jaeger (2001) の線形メモリ容量 (linear memory capacity) を採用する
 理論上界: `total_mc <= N`（リザバーの自由度がその線形写像で表現できる独立記憶単位数を
 超えない）。
 
-### 4.4 診断レポート（`diagnostics/report.py`）
+### 4.4 診断レポート（`diagnostics/runner.py` と `diagnostics/report.py`）
+
+責務は 2 つのモジュールに分かれる。`runner.py` が「どのリザバーで何を測るか」を
+決めて `DiagnosticsReport` を組み立て、`report.py` が結果の表現（レポート型・
+JSON 化・ファイル書き出し・ログ整形）を担う。依存は `runner.py` → `report.py` の
+一方向。
+
+JSON への変換は各結果型の `to_dict()` に委ねる（`ESNConfig` / `EspResult` /
+`MemoryCapacityResult` / `SpectralSummary`）。実装は `dataclasses.asdict` を基礎に
+しており、結果型にフィールドを足せば JSON にも自動的に現れる。以前は `report.py`
+がフィールド名を手書きで列挙していたため、たとえば ESP に 4 つ目の指標を足しても
+mypy も pytest も落ちないまま JSON から欠落した。`to_dict()` に移しただけでは列挙の
+場所が変わるだけなので、`tests/test_report_serialization.py` が `dataclasses.fields`
+から期待値を導いて「全フィールドが辞書に現れる」ことを固定している。
 
 `@dataclass(frozen=True) DiagnosticsReport` は以下を収録する:
 
-| フィールド         | 内容                                                            |
-| ------------------ | ----------------------------------------------------------------- |
-| `schema_version`   | `"0.2.0"`                                                          |
-| `generated_at`     | UTC ISO8601 タイムスタンプ                                        |
-| `package_version`  | `esn_vla_uq.__version__`                                          |
-| `numpy_version`    | `numpy.__version__`                                               |
-| `esn_config`       | `ESNConfig` の全フィールド                                        |
-| `seed`             | 診断実行に使った seed                                             |
-| `n_inputs`         | `spectral`/`esp` を計算したリザバーの入力次元 `D_u`（`--n-inputs`） |
-| `spectral`         | `spectral_radius`, `effective_spectral_radius`                    |
-| `esp`              | `EspResult` の全フィールド                                        |
-| `memory_capacity`  | `MemoryCapacityResult` の全フィールドに加え、測定コンテキストとして `n_inputs`（測定に使ったリザバーの入力次元。常に 1）と `reservoir`（`"shared"`: `spectral`/`esp` と同じリザバーで測定 / `"separate"`: 別の `D_u=1` リザバーで測定）を持つ。`--skip-memory-capacity` 指定時は `null` |
-| `data_source`      | 常に `"synthetic"`（Sprint 1 時点。第 7 節参照）                   |
+| フィールド        | 内容                                                                                                                                                                                                                                                                                    |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema_version`  | `"0.2.0"`                                                                                                                                                                                                                                                                               |
+| `generated_at`    | UTC ISO8601 タイムスタンプ                                                                                                                                                                                                                                                              |
+| `package_version` | `esn_vla_uq.__version__`                                                                                                                                                                                                                                                                |
+| `numpy_version`   | `numpy.__version__`                                                                                                                                                                                                                                                                     |
+| `esn_config`      | `ESNConfig` の全フィールド                                                                                                                                                                                                                                                              |
+| `seed`            | 診断実行に使った seed                                                                                                                                                                                                                                                                   |
+| `n_inputs`        | `spectral`/`esp` を計算したリザバーの入力次元 `D_u`（`--n-inputs`）                                                                                                                                                                                                                     |
+| `spectral`        | `spectral_radius`, `effective_spectral_radius`                                                                                                                                                                                                                                          |
+| `esp`             | `EspResult` の全フィールド                                                                                                                                                                                                                                                              |
+| `memory_capacity` | `MemoryCapacityResult` の全フィールドに加え、測定コンテキストとして `n_inputs`（測定に使ったリザバーの入力次元。常に 1）と `reservoir`（`"shared"`: `spectral`/`esp` と同じリザバーで測定 / `"separate"`: 別の `D_u=1` リザバーで測定）を持つ。`--skip-memory-capacity` 指定時は `null` |
+| `data_source`     | 常に `"synthetic"`（Sprint 1 時点。第 7 節参照）                                                                                                                                                                                                                                        |
 
 `n_inputs`（トップレベル）は当初の設計にはなかったフィールドだが、リザバー行列の
 生成が `seed` と入力次元 `D_u` の両方に依存する（3.3 節）ため、事後にどの `D_u` の
@@ -553,16 +638,32 @@ dtype 整合（`float32`/`bool`）、`action_chunk` の `NaN` 配置が `is_infe
 
 違反時は、どのフィールドがどう不正かを含む `ValueError` を送出する。
 
-### 5.2 データソースの抽象化（`data/source.py`）
+### 5.2 データソースの抽象化（`data/sources/`）
 
 ```python
+# data/sources/base.py — 依存は data/schema.py のみ
 class RolloutSource(Protocol):
     def load(self) -> RolloutDataset: ...
 ```
 
-`SyntheticRolloutSource` が Sprint 1 でこの Protocol を実装する。Sprint 2 の
-`OpenpiLogSource` も同じ Protocol を実装し、`esn`/`diagnostics`/CLI 側のコードを変更せずに
-差し替え可能にする（第 2 節の openpi 疎結合設計の具体化）。
+`SyntheticRolloutSource`（`data/sources/synthetic.py`）が Sprint 1 でこの Protocol を
+実装する。Sprint 2 の `OpenpiLogSource`（`data/sources/openpi.py`）も同じ Protocol を
+実装し、`esn`/`diagnostics`/CLI 側のコードを変更せずに差し替え可能にする（第 2 節の
+openpi 疎結合設計の具体化）。
+
+抽象（`base.py`）と具象（`synthetic.py`・将来の `openpi.py`）をファイルで分けるのは、
+Protocol を型注釈に使いたいだけのコードが具象パーサをロードしないためである。
+**任意依存を持つ具象供給元を `data/sources/__init__.py` および
+`data/__init__.py` で再エクスポートしないこと**（再エクスポートすると、パッケージ
+配下のどれか 1 つを import しただけでその具象がロードされる）。この規約は
+`tests/test_layering.py` が検査する。`SyntheticRolloutSource` は任意依存を持たない
+ため再エクスポートの対象に含めている。
+
+出所ごとの追加不変条件（例: 合成データの失敗エピソードには `failure_onset` が必須）は
+具象供給元ではなく `data/invariants.py` に置き、`validate_by_source` がレジストリを
+引いて振り分ける。`data/io.py` は読み込み境界と書き出し境界の両方からこの関数を
+呼ぶ。不変条件は `RolloutDataset` の中身だけを見るため、どの出所の分もパーサを
+import せずに書ける。
 
 ### 5.3 合成データ生成（`data/synthetic.py`）
 
@@ -621,13 +722,13 @@ shape を検証する。
 
 ここは **4 回続けて不完全な修正を出した**箇所である。実測された各段階の破れ方:
 
-| 実装 | 破り方 | PoC サイズ | 確保要求 |
-| --- | --- | --- | --- |
-| メタデータ由来の次元だけ検証 | `.npy` ヘッダの shape は無検証 | 4.6 MB | 4.47 GiB |
-| ＋ zip 非圧縮サイズ合計 | ヘッダだけ巨大 shape を騙り実データを持たない | 1,104 B | 4.47 GiB |
-| ＋ `.npy` ヘッダ shape（**ファイル名が `.npy` のものだけ**） | エントリ名から拡張子を外す | 1,099 B | 32 GiB |
-| ＋ magic バイトで判定（ただし**符号付き合計を 1 回だけ比較**） | 負の次元を宣言したダミーで合計を相殺 | 1,283 B | 32 GiB〜512 TiB |
-| ＋ **負の次元を拒否・エントリ単位で比較**（現行） | — | — | — |
+| 実装                                                           | 破り方                                        | PoC サイズ | 確保要求        |
+| -------------------------------------------------------------- | --------------------------------------------- | ---------- | --------------- |
+| メタデータ由来の次元だけ検証                                   | `.npy` ヘッダの shape は無検証                | 4.6 MB     | 4.47 GiB        |
+| ＋ zip 非圧縮サイズ合計                                        | ヘッダだけ巨大 shape を騙り実データを持たない | 1,104 B    | 4.47 GiB        |
+| ＋ `.npy` ヘッダ shape（**ファイル名が `.npy` のものだけ**）   | エントリ名から拡張子を外す                    | 1,099 B    | 32 GiB          |
+| ＋ magic バイトで判定（ただし**符号付き合計を 1 回だけ比較**） | 負の次元を宣言したダミーで合計を相殺          | 1,283 B    | 32 GiB〜512 TiB |
+| ＋ **負の次元を拒否・エントリ単位で比較**（現行）              | —                                             | —          | —               |
 
 3 番目の破れが本質的に重要である。numpy の `NpzFile` はキーを
 `name.removesuffix(".npy")` で解決するため **`.npy` サフィックスは任意**であり、
@@ -676,7 +777,7 @@ CLI `gen-sample-data` は `--seed`, `--n-episodes`, `--output`（共通オプシ
 
 ### 5.5 openpi ログへの差し替え手順（Sprint 2 予定）
 
-1. `OpenpiLogSource(RolloutSource)` を `data/source.py` に追加し、openpi の
+1. `OpenpiLogSource(RolloutSource)` を `data/sources/openpi.py` に追加し、openpi の
    policy server ログ（観測トークン・action chunk・成否ラベル）を `Episode`
    スキーマにマッピングする `load()` を実装する。
 2. `state`/`action` の次元・単位が LIBERO の実機/シムと一致することを検証する
