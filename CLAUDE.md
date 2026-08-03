@@ -12,7 +12,8 @@
 ## プロジェクト概要
 
 <!-- TODO: 1〜2行でプロジェクトの目的を書く -->
-このプロジェクトは _____ を行うPythonモノレポです。
+
+このプロジェクトは \_\_\_\_\_ を行うPythonモノレポです。
 ISMS（ISO/IEC 27001）準拠の開発プロセスに従います。
 
 ## 推奨される進め方
@@ -25,6 +26,7 @@ ISMS（ISO/IEC 27001）準拠の開発プロセスに従います。
 6. 最終的に自分の目で200行以下に収まっていることを確認
 
 ### 指示サンプル
+
 ```
 このCLAUDE.mdテンプレートを読んで、
 現在のプロジェクト構成を調査した上で、
@@ -50,12 +52,19 @@ TODOの部分を実際の内容に書き換えて。
 ├── docs/
 │   ├── plans/             # planner の仕様書・タスクリスト
 │   └── adr/               # architect の設計判断記録 (ADR)
+├── src/esn_vla_uq/        # パッケージ本体 (src レイアウト)
+│   ├── cli/               # argparse CLI (エントリポイント esn-vla-uq)
+│   ├── esn/               # ESN コア (リザバー / リッジ read-out / モデル)
+│   ├── diagnostics/       # リザバー診断 (スペクトル半径 / ESP / メモリ容量)
+│   ├── data/              # ロールアウトのスキーマ・合成生成・入出力
+│   └── assets/samples/    # 同梱サンプルデータ (合成データのみ)
 ├── .pre-commit-config.yaml # pre-commit フック設定
 ├── Makefile               # 検証コマンドの単一の真実 (make ci)
-├── main.py                # エントリポイント
 ├── tests/                 # pytest テスト
-├── pyproject.toml         # プロジェクト・依存関係定義 (uv)
+├── pyproject.toml         # プロジェクト・依存関係定義 (uv + hatchling)
 ├── uv.lock                # 依存関係のロックファイル
+├── LICENSE                # Apache-2.0
+├── CITATION.cff           # 引用情報
 └── CLAUDE.md              # このファイル
 ```
 
@@ -84,13 +93,17 @@ uv run mypy .                        # 型チェック
 uv run pre-commit install            # フックの初期設定
 uv run pre-commit run --all-files    # 全ファイルに手動実行
 
-# 実行
-uv run python main.py                # エントリポイント実行
+# 実行 (CLI エントリポイント)
+uv run esn-vla-uq --help             # サブコマンド一覧
+uv run esn-vla-uq --version          # バージョン表示
+uv run esn-vla-uq diagnose           # リザバー診断 (T4 で実装)
+uv run esn-vla-uq gen-sample-data    # 合成サンプルデータ生成 (T5 で実装)
 ```
 
 ## アーキテクチャ原則
 
 <!-- TODO: プロジェクト固有のアーキテクチャ原則を記載 -->
+
 - 認証・認可は既存の共通基盤を使用し、独自実装しない
 
 ## コード規約
@@ -104,6 +117,7 @@ uv run python main.py                # エントリポイント実行
 <!-- 詳細な手順・チェックリストは .claude/skills/isms-security/SKILL.md に記載 -->
 
 **絶対禁止:**
+
 - 認証情報（パスワード、APIキー、トークン）のハードコード
 - `.env`, 秘密鍵, `credentials.json` のコミット
 - ログへの個人情報・認証情報の出力
@@ -112,6 +126,7 @@ uv run python main.py                # エントリポイント実行
 - セキュリティ機能の無効化、監査ログの削除
 
 **必須:**
+
 - シークレットは環境変数またはKey Vaultから取得
 - 全ユーザー入力を検証・サニタイズ（SQLi, XSS, コマンドインジェクション対策）
 - パラメータ化クエリの使用（生SQLの禁止）
@@ -119,6 +134,7 @@ uv run python main.py                # エントリポイント実行
 - セキュリティに関わるコードは必ず人間がレビュー
 
 **ログ出力ルール:**
+
 - 含める: タイムスタンプ(UTC), イベント種別, ユーザーID, リソースID, 結果
 - 含めない: パスワード, トークン, カード番号, 氏名, 住所, メールアドレス
 
@@ -174,6 +190,7 @@ uv run python main.py                # エントリポイント実行
 - パブリックAPIの型シグネチャを無断変更しない
 - `# type: ignore` / `# nosec` / `# noqa` を理由なく使わない
 - `.env` やシークレットをハードコードしない
+
 <!-- ============================================================
   ↓ ここから下は、Claudeが間違えるたびに追記するセクション ↓
   例: 「xxxモジュールのインポートパスは packages.core.xxx であること」

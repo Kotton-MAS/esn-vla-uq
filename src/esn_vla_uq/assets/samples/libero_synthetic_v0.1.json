@@ -1,0 +1,294 @@
+{
+  "schema_version": "0.1.0",
+  "source": "synthetic",
+  "policy": "synthetic-chunked-policy-v0.1",
+  "seed": 0,
+  "control_hz": 20.0,
+  "n_episodes": 40,
+  "total_steps": 7690,
+  "state_dim": 8,
+  "action_dim": 7,
+  "chunk_horizon": 16,
+  "episodes": [
+    {
+      "episode_id": "synthetic_0000",
+      "task_name": "synthetic_pick_up_bowl",
+      "success": true,
+      "n_steps": 219,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0001",
+      "task_name": "synthetic_place_bowl_on_plate",
+      "success": true,
+      "n_steps": 170,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0002",
+      "task_name": "synthetic_open_drawer",
+      "success": true,
+      "n_steps": 153,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0003",
+      "task_name": "synthetic_put_mug_in_drawer",
+      "success": true,
+      "n_steps": 156,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0004",
+      "task_name": "synthetic_pick_up_bowl",
+      "success": true,
+      "n_steps": 201,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0005",
+      "task_name": "synthetic_place_bowl_on_plate",
+      "success": true,
+      "n_steps": 171,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0006",
+      "task_name": "synthetic_open_drawer",
+      "success": true,
+      "n_steps": 235,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0007",
+      "task_name": "synthetic_put_mug_in_drawer",
+      "success": false,
+      "n_steps": 199,
+      "failure_onset": 103
+    },
+    {
+      "episode_id": "synthetic_0008",
+      "task_name": "synthetic_pick_up_bowl",
+      "success": true,
+      "n_steps": 176,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0009",
+      "task_name": "synthetic_place_bowl_on_plate",
+      "success": true,
+      "n_steps": 194,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0010",
+      "task_name": "synthetic_open_drawer",
+      "success": true,
+      "n_steps": 191,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0011",
+      "task_name": "synthetic_put_mug_in_drawer",
+      "success": true,
+      "n_steps": 201,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0012",
+      "task_name": "synthetic_pick_up_bowl",
+      "success": true,
+      "n_steps": 179,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0013",
+      "task_name": "synthetic_place_bowl_on_plate",
+      "success": true,
+      "n_steps": 200,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0014",
+      "task_name": "synthetic_open_drawer",
+      "success": false,
+      "n_steps": 193,
+      "failure_onset": 163
+    },
+    {
+      "episode_id": "synthetic_0015",
+      "task_name": "synthetic_put_mug_in_drawer",
+      "success": false,
+      "n_steps": 179,
+      "failure_onset": 102
+    },
+    {
+      "episode_id": "synthetic_0016",
+      "task_name": "synthetic_pick_up_bowl",
+      "success": false,
+      "n_steps": 185,
+      "failure_onset": 98
+    },
+    {
+      "episode_id": "synthetic_0017",
+      "task_name": "synthetic_place_bowl_on_plate",
+      "success": false,
+      "n_steps": 196,
+      "failure_onset": 122
+    },
+    {
+      "episode_id": "synthetic_0018",
+      "task_name": "synthetic_open_drawer",
+      "success": true,
+      "n_steps": 214,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0019",
+      "task_name": "synthetic_put_mug_in_drawer",
+      "success": true,
+      "n_steps": 217,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0020",
+      "task_name": "synthetic_pick_up_bowl",
+      "success": true,
+      "n_steps": 212,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0021",
+      "task_name": "synthetic_place_bowl_on_plate",
+      "success": false,
+      "n_steps": 169,
+      "failure_onset": 136
+    },
+    {
+      "episode_id": "synthetic_0022",
+      "task_name": "synthetic_open_drawer",
+      "success": true,
+      "n_steps": 195,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0023",
+      "task_name": "synthetic_put_mug_in_drawer",
+      "success": true,
+      "n_steps": 189,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0024",
+      "task_name": "synthetic_pick_up_bowl",
+      "success": false,
+      "n_steps": 237,
+      "failure_onset": 133
+    },
+    {
+      "episode_id": "synthetic_0025",
+      "task_name": "synthetic_place_bowl_on_plate",
+      "success": true,
+      "n_steps": 157,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0026",
+      "task_name": "synthetic_open_drawer",
+      "success": true,
+      "n_steps": 172,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0027",
+      "task_name": "synthetic_put_mug_in_drawer",
+      "success": false,
+      "n_steps": 180,
+      "failure_onset": 129
+    },
+    {
+      "episode_id": "synthetic_0028",
+      "task_name": "synthetic_pick_up_bowl",
+      "success": true,
+      "n_steps": 220,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0029",
+      "task_name": "synthetic_place_bowl_on_plate",
+      "success": true,
+      "n_steps": 162,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0030",
+      "task_name": "synthetic_open_drawer",
+      "success": true,
+      "n_steps": 233,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0031",
+      "task_name": "synthetic_put_mug_in_drawer",
+      "success": true,
+      "n_steps": 181,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0032",
+      "task_name": "synthetic_pick_up_bowl",
+      "success": true,
+      "n_steps": 161,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0033",
+      "task_name": "synthetic_place_bowl_on_plate",
+      "success": false,
+      "n_steps": 192,
+      "failure_onset": 134
+    },
+    {
+      "episode_id": "synthetic_0034",
+      "task_name": "synthetic_open_drawer",
+      "success": true,
+      "n_steps": 237,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0035",
+      "task_name": "synthetic_put_mug_in_drawer",
+      "success": true,
+      "n_steps": 203,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0036",
+      "task_name": "synthetic_pick_up_bowl",
+      "success": false,
+      "n_steps": 240,
+      "failure_onset": 188
+    },
+    {
+      "episode_id": "synthetic_0037",
+      "task_name": "synthetic_place_bowl_on_plate",
+      "success": false,
+      "n_steps": 152,
+      "failure_onset": 79
+    },
+    {
+      "episode_id": "synthetic_0038",
+      "task_name": "synthetic_open_drawer",
+      "success": true,
+      "n_steps": 215,
+      "failure_onset": null
+    },
+    {
+      "episode_id": "synthetic_0039",
+      "task_name": "synthetic_put_mug_in_drawer",
+      "success": false,
+      "n_steps": 154,
+      "failure_onset": 114
+    }
+  ]
+}

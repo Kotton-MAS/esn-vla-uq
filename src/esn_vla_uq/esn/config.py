@@ -1,0 +1,81 @@
+"""ESN のハイパーパラメータ定義と範囲検証。
+
+既定値は `docs/design.md` の「ESN の数学仕様」節に記載する既定ハイパーパラメータ表
+と対応する。値の意味は以下のとおり。
+
+- ``n_reservoir``: リザバーのニューロン数 N
+- ``spectral_radius``: 再帰行列 W のスペクトル半径 rho
+- ``input_scaling``: 入力行列 W_in の一様分布の振幅
+- ``bias_scaling``: バイアス b の一様分布の振幅
+- ``leak_rate``: リーク率 a (1.0 で非リーク型に退化する)
+- ``density``: W の非零要素の割合 (疎行列は密行列 + マスクで表現する)
+- ``ridge_alpha``: リッジ read-out の正則化強度 lambda
+- ``washout``: 学習・評価から捨てる先頭ステップ数
+- ``input_passthrough``: read-out の設計行列に入力 u を含めるか (既定で有効)
+- ``seed``: `numpy.random.default_rng` に渡す唯一の乱数シード
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+DEFAULT_N_RESERVOIR = 200
+DEFAULT_SPECTRAL_RADIUS = 0.9
+DEFAULT_INPUT_SCALING = 1.0
+DEFAULT_BIAS_SCALING = 0.0
+DEFAULT_LEAK_RATE = 1.0
+DEFAULT_DENSITY = 0.1
+DEFAULT_RIDGE_ALPHA = 1e-6
+DEFAULT_WASHOUT = 100
+DEFAULT_INPUT_PASSTHROUGH = True
+DEFAULT_SEED = 0
+
+
+@dataclass(frozen=True)
+class ESNConfig:
+    """ESN のハイパーパラメータ (不変)。
+
+    `__post_init__` で範囲検証を行い、違反時は違反したパラメータ名と実値を含む
+    `ValueError` を送出する。
+    """
+
+    n_reservoir: int = DEFAULT_N_RESERVOIR
+    spectral_radius: float = DEFAULT_SPECTRAL_RADIUS
+    input_scaling: float = DEFAULT_INPUT_SCALING
+    bias_scaling: float = DEFAULT_BIAS_SCALING
+    leak_rate: float = DEFAULT_LEAK_RATE
+    density: float = DEFAULT_DENSITY
+    ridge_alpha: float = DEFAULT_RIDGE_ALPHA
+    washout: int = DEFAULT_WASHOUT
+    input_passthrough: bool = DEFAULT_INPUT_PASSTHROUGH
+    seed: int = DEFAULT_SEED
+
+    def __post_init__(self) -> None:
+        """範囲外のパラメータを検出して `ValueError` を送出する。"""
+        if self.n_reservoir < 1:
+            raise ValueError(
+                f"n_reservoir は 1 以上である必要があります (実値: {self.n_reservoir})"
+            )
+        if not self.spectral_radius > 0.0:
+            raise ValueError(
+                "spectral_radius は 0 より大きい必要があります "
+                f"(実値: {self.spectral_radius})"
+            )
+        if not 0.0 < self.leak_rate <= 1.0:
+            raise ValueError(
+                f"leak_rate は 0 < leak_rate <= 1 の範囲である必要があります "
+                f"(実値: {self.leak_rate})"
+            )
+        if not 0.0 < self.density <= 1.0:
+            raise ValueError(
+                f"density は 0 < density <= 1 の範囲である必要があります "
+                f"(実値: {self.density})"
+            )
+        if self.ridge_alpha < 0.0:
+            raise ValueError(
+                f"ridge_alpha は 0 以上である必要があります (実値: {self.ridge_alpha})"
+            )
+        if self.washout < 0:
+            raise ValueError(
+                f"washout は 0 以上である必要があります (実値: {self.washout})"
+            )
