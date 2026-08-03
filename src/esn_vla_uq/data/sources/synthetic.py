@@ -1,14 +1,14 @@
-"""ロールアウトデータの供給元を抽象化する Protocol。
+"""合成ロールアウトを供給する具象 `RolloutSource`。
 
-Sprint 1 では合成データ (`SyntheticRolloutSource`) のみを提供する。Sprint 2 で追加する
-`OpenpiLogSource` は同じ `RolloutSource` Protocol を満たすだけでよく、openpi を
-ランタイム依存に加える必要はない (疎結合設計)。
+`data/synthetic.py` (生成モデルそのもの) の薄いアダプタであり、生成ロジックは
+持たない。Protocol の定義は `data/sources/base.py` にあり、本モジュールは
+そちらを import しない (実装が Protocol を満たすかは構造的部分型として
+`runtime_checkable` なテストで確認する)。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
 
 from esn_vla_uq.data.schema import RolloutDataset
 from esn_vla_uq.data.synthetic import (
@@ -18,15 +18,6 @@ from esn_vla_uq.data.synthetic import (
     DEFAULT_SUCCESS_RATE,
     generate_dataset,
 )
-
-
-@runtime_checkable
-class RolloutSource(Protocol):
-    """ロールアウトデータセットの供給元。"""
-
-    def load(self) -> RolloutDataset:
-        """検証済みの `RolloutDataset` を返す。"""
-        ...
 
 
 @dataclass(frozen=True)

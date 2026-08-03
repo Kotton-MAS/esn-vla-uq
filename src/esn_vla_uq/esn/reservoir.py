@@ -9,17 +9,22 @@
 
 疎行列は scipy を導入せず「密行列 + マスク」で表現し、スペクトル半径は
 `np.linalg.eigvals` の密計算で求める (N の実用上限は `docs/design.md` を参照)。
+その計算は最下層の `esn_vla_uq.linalg.spectral_radius` に一本化されており、
+`diagnostics/spectral.py` が診断値として公開するのと**同一の実装**である
+(A5、`esn_vla_uq/linalg.py` の docstring)。
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Protocol, cast
 
 import numpy as np
 from numpy.typing import NDArray
 
 from esn_vla_uq.esn.config import ESNConfig
+from esn_vla_uq.linalg import spectral_radius
 
 logger = logging.getLogger(__name__)
 
@@ -38,17 +43,6 @@ class Activation(Protocol):
 def tanh_activation(x: NDArray[np.float64]) -> NDArray[np.float64]:
     """既定の活性化関数 (tanh)。"""
     return cast("NDArray[np.float64]", np.tanh(x))
-
-
-def _max_abs_eigenvalue(matrix: NDArray[np.float64]) -> float:
-    """正方行列の固有値の絶対値の最大 (= スペクトル半径) を返す。
-
-    公開 API としてのスペクトル半径は `diagnostics` 側で提供する。ここでは
-    `W` のスケーリングに必要な内部ヘルパとしてのみ用いる。
-    """
-    if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
-        raise ValueError(f"正方行列が必要です (実 shape: {matrix.shape})")
-    return float(np.max(np.abs(np.linalg.eigvals(matrix))))
 
 
 def discard_washout(states: NDArray[np.float64], washout: int) -> NDArray[np.float64]:
@@ -165,6 +159,39 @@ class Reservoir:
         return state.copy()
 
 
+def run_episodes(
+    reservoir: Reservoir, segments: Sequence[NDArray[np.float64]]
+) -> NDArray[np.float64]:
+    """区間ごとに初期状態へ戻しながら駆動し、状態を連結して `[T_total, N]` を返す。
+
+    ロールアウトのエピソードは互いに独立した試行であり、直前のエピソード末尾の
+    リザバー状態を次のエピソード先頭へ持ち越すと、実際には観測していない過去に
+    依存した状態が特徴量に混入する。連結した配列をそのまま `Reservoir.run` へ
+    渡すとまさにそれが起きるため、**エピソード境界では必ず初期状態へ戻す**
+    (`docs/design.md` 3.9 節)。この方針は「どちらでも動くが片方が誤り」という
+    種類の選択であり、呼び出し側ごとに実装させない (A8)。
+
+    区間の切り出しは `esn_vla_uq.data.features` が担う。この関数は `data` 層に
+    依存せず、区間の列だけを受け取る。
+
+    Args:
+        reservoir: 駆動するリザバー。
+        segments: 区間ごとの入力 `[T_i, n_inputs]` の列。空列は不可。
+
+    Returns:
+        連結した状態行列 `[sum(T_i), N]`。行の並びは `segments` の連結順と一致
+        するため、`data/features.py` の `episode_starts` でそのまま切り出せる。
+
+    Raises:
+        ValueError: `segments` が空の場合、または区間の shape が不正な場合
+            (`Reservoir.run` の検証に従う)。
+    """
+    if len(segments) == 0:
+        raise ValueError("segments: 1 区間以上必要です")
+    states = [reservoir.run(segment) for segment in segments]
+    return np.concatenate(states, axis=0)
+
+
 def _make_input_matrix(
     rng: np.random.Generator, config: ESNConfig, n_inputs: int
 ) -> NDArray[np.float64]:
@@ -188,7 +215,7 @@ def _make_recurrent_matrix(
     raw = rng.uniform(-1.0, 1.0, size=size)
     matrix = np.where(mask, raw, 0.0)
 
-    radius = _max_abs_eigenvalue(matrix)
+    radius = spectral_radius(matrix, "W")
     if radius == 0.0:
         raise ValueError(
             "生成された W のスペクトル半径が 0 のためスケールできません "

@@ -27,11 +27,14 @@
 ヘッダのみ読む) から求めた npz 全エントリの非圧縮サイズ合計を
 `check_npz_uncompressed_budget` で検証する。
 
-`_build_dataset` はさらに `dataset.source` 別の追加検証フックを 1 箇所持つ
-(`_validate_by_source`)。`source == "synthetic"` のときは
-`data/synthetic.py` の `validate_synthetic_dataset` を呼び、合成データ生成器
-固有の不変条件 (失敗エピソードには `failure_onset` が必須) を読み込み境界でも
-検証する。Sprint 2 で `source == "openpi"` 固有の不変条件を足す際の拡張点になる。
+出所ごとの追加不変条件は `data/invariants.py` の `validate_by_source` に委ねる。
+`save_dataset` (書き出し境界) と `_build_dataset` (読み込み境界) の両方から
+呼ぶことで、書けるのに読めない非対称な成果物を作れないようにする。
+
+本モジュールは具象の供給元 (`data/synthetic.py`、Sprint 2 の openpi ログ
+パーサ) を import しない。以前は `validate_synthetic_dataset` を
+`data/synthetic.py` から直接 import しており、`source == "openpi"` の分岐を
+足した時点で `io.py` が openpi パーサに依存する構造だった (S7)。
 """
 
 from __future__ import annotations
@@ -50,12 +53,12 @@ from numpy.lib import format as npy_format
 from numpy.lib.npyio import NpzFile
 from numpy.typing import NDArray
 
+from esn_vla_uq.data.invariants import validate_by_source
 from esn_vla_uq.data.schema import (
     MAX_ACTION_DIM,
     MAX_CHUNK_HORIZON,
     MAX_STATE_DIM,
     SUPPORTED_SCHEMA_VERSIONS,
-    DataSource,
     Episode,
     NpzArray,
     RolloutDataset,
@@ -65,7 +68,7 @@ from esn_vla_uq.data.schema import (
     check_npz_uncompressed_budget,
     validate_episode_index,
 )
-from esn_vla_uq.data.synthetic import validate_synthetic_dataset
+from esn_vla_uq.provenance import DataSource
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +140,7 @@ def save_dataset(dataset: RolloutDataset, path: Path) -> Path:
 
     Args:
         dataset: 保存対象。保存前に `validate()` と出所別の追加検証
-            (`_validate_by_source`) を実行する。
+            (`invariants.validate_by_source`) を実行する。
         path: 出力する `.npz` のパス。サイドカーは同名の `.json`。
 
     Returns:
@@ -149,14 +152,14 @@ def save_dataset(dataset: RolloutDataset, path: Path) -> Path:
     """
     archive_path = _ensure_archive_path(path)
     dataset.validate()
-    # `_validate_by_source` は元々 `_build_dataset` (読み込み側) からのみ
+    # 出所別の検証は元々 `_build_dataset` (読み込み側) からのみ
     # 呼ばれており、save 側は `dataset.validate()` (共通スキーマ契約) しか
     # 経由しなかった。そのため出所固有の不変条件 (例: 合成データの失敗
     # エピソードには failure_onset が必須) に違反したデータセットが
     # save_dataset には受理されるのに load_dataset では ValueError になる、
     # という非対称な成果物 (書けるが二度と読めない) を作れてしまっていた。
     # save/load の両境界で同じ検証を通すことでこの非対称性を解消する。
-    _validate_by_source(dataset)
+    validate_by_source(dataset)
     archive_path.parent.mkdir(parents=True, exist_ok=True)
 
     arrays = _concatenate(dataset)
@@ -516,32 +519,8 @@ def _build_dataset(
         chunk_horizon=chunk_horizon,
     )
     dataset.validate()
-    _validate_by_source(dataset)
+    validate_by_source(dataset)
     return dataset
-
-
-def _validate_by_source(dataset: RolloutDataset) -> None:
-    """`dataset.source` 別の追加不変条件を検証するフック。
-
-    `RolloutDataset.validate()` は出所に依存しない共通スキーマ契約のみを
-    検証する。出所固有の追加契約 (例: 合成データ生成器が要求する
-    `failure_onset` の必須化) はここで振り分ける。`_build_dataset`
-    (`load_dataset` / `load_bundled_sample` が共有する読み込み側の復元処理)
-    と `save_dataset` の両方から呼ぶことで、生成経路・読み込み境界に加えて
-    書き出し境界でも検証を確実に通す (M2)。
-
-    以前は `_build_dataset` からしか呼んでおらず、`save_dataset` は
-    `dataset.validate()` (共通スキーマ契約) しか経由しなかった。そのため
-    出所固有の不変条件に違反したデータセットが保存はできるのに二度と
-    読み込めない、という非対称な成果物を作れてしまっていた
-    (`save_dataset` の docstring 参照)。
-
-    `io` から `synthetic` への依存はこの 1 方向のみで、`synthetic` は `io` を
-    import しないため data レイヤ内で循環しない。Sprint 2 で
-    `source == "openpi"` 固有の不変条件を足すときはここに分岐を追加する。
-    """
-    if dataset.source == "synthetic":
-        validate_synthetic_dataset(dataset)
 
 
 def load_dataset(path: Path) -> RolloutDataset:

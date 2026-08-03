@@ -25,7 +25,7 @@ read-out を個別に解く代わりに多出力の目標行列 ``Y = [y_1, ...,
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Final
 
 import numpy as np
@@ -81,6 +81,17 @@ class MemoryCapacityResult:
     def n_delays(self) -> int:
         """評価した最大遅延 K。"""
         return len(self.per_delay)
+
+    def to_dict(self) -> dict[str, object]:
+        """JSON シリアライズ可能な辞書へ変換する (診断レポート用)。
+
+        フィールドは `dataclasses.asdict` で列挙し、フィールドを足したときに
+        診断レポート JSON から黙って欠落しないようにする (A2)。`n_delays` は
+        フィールドではなく `per_delay` から導出する property なので `asdict`
+        には現れず、JSON の読み手が `per_delay` を数えずに済むよう明示的に
+        加える。
+        """
+        return {**asdict(self), "n_delays": self.n_delays}
 
 
 def default_max_delay(n_reservoir: int) -> int:

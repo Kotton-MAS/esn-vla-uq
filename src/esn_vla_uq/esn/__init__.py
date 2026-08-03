@@ -11,6 +11,7 @@ from esn_vla_uq.esn.reservoir import (
     Activation,
     Reservoir,
     discard_washout,
+    run_episodes,
     tanh_activation,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "Reservoir",
     "RidgeReadout",
     "discard_washout",
+    "run_episodes",
     "tanh_activation",
 ]

@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 DEFAULT_N_RESERVOIR = 200
 DEFAULT_SPECTRAL_RADIUS = 0.9
@@ -79,3 +79,14 @@ class ESNConfig:
             raise ValueError(
                 f"washout は 0 以上である必要があります (実値: {self.washout})"
             )
+
+    def to_dict(self) -> dict[str, object]:
+        """JSON シリアライズ可能な辞書へ変換する (診断レポート用)。
+
+        フィールドは `dataclasses.asdict` で列挙する。以前は
+        `diagnostics/report.py` がフィールド名を手書きで並べており、
+        ここにハイパーパラメータを 1 つ足しても診断レポート JSON からは
+        黙って欠落した (A2)。全フィールドが JSON 互換のスカラーであるため
+        `asdict` の戻り値をそのまま使える。
+        """
+        return asdict(self)

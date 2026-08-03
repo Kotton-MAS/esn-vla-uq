@@ -5,37 +5,32 @@ Sprint 1（`feat/sprint1-esn-core`）の 7 観点並列レビューで検出さ�
 
 HIGH 12 件は Phase 4 で修正済み。以下は次スプリント以降の候補。
 
-`#` 列の ID は追跡用に固定する。解決済みの項目は行ごと削除し、ID の欠番は詰めない
-（S1・S6 は Sprint 1 で解決したため欠番）。
+`#` 列の ID は追跡用に固定する。解決済みの項目は行ごと削除し、ID の欠番は詰めない。
+欠番の内訳: S1・S6 は Sprint 1 で解決。A1・A2・A4・A5・A8・S7 は
+「Sprint 2 着手前」の一括対応で解決（`refactor/sprint2-prep-a1-a8`）。
 
 **この文書は公開リポジトリに含まれる。** 非公開情報（第三者の実名、社内でのみ通用する
 呼称など）や、その検出パターンをここに書かないこと。書いた時点で除去の意味がなくなる。
 
-## アーキテクチャ（Sprint 2 着手前にやると安い）
+## アーキテクチャ
 
-| #   | 対象                                           | 内容                                                                                                                                                                                                                                                                                                                                                                               |
-| --- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A1  | `data/source.py`                               | 抽象（`RolloutSource` Protocol）と具象（`SyntheticRolloutSource`）が同居。Sprint 2 で `OpenpiLogSource` を足すと、Protocol を参照するだけの利用側が合成データ生成器と openpi ログパーサの両方をロードすることになり、「openpi をランタイム依存に入れない」の担保が import 構造ではなく規律だけに依存する。`data/sources/` へ具象を分離する（再エクスポート名を変えなければ非破壊） |
-| A2  | `diagnostics/report.py`                        | 4 責務（実行オーケストレーション / 辞書化 / ファイル書き出し / ログ整形）を持つ。特に辞書化が他モジュールのフィールドを手書き列挙しているため、`EspResult` にフィールドを足しても JSON から黙って欠落する。各結果型に `to_dict()` を持たせ、`run_diagnostics` は `runner.py` へ分離                                                                                                |
-| A3  | `esn/config.py`                                | `ESNConfig` にリザバー生成系と read-out 学習系が同居。diagnose 経路では後者（`ridge_alpha`/`washout`/`input_passthrough`）が効かないのにレポート JSON に記録され、読者が「この ridge_alpha でこの数値が出た」と誤読しうる。`ReservoirConfig` / `ReadoutConfig` への分割は破壊的変更なので design.md 改訂とセットで                                                                 |
-| A4  | `diagnostics/report.py` / `data/schema.py`     | `DataSource = Literal["synthetic", "openpi"]` が二重定義。出所を追加するとき片方だけ更新される危険                                                                                                                                                                                                                                                                                 |
-| A5  | `esn/reservoir.py` / `diagnostics/spectral.py` | `_max_abs_eigenvalue` と `spectral_radius` が同一計算の二重実装。N>500 で反復法へ切り替えた瞬間に「W は目標 ρ にスケール済み」を検証しているはずの診断値が無意味になる。最下層 `linalg.py` へ寄せる                                                                                                                                                                                |
-| A6  | `cli/app.py`                                   | サブコマンド追加が 4 箇所同時編集を要求。argparse 標準の `set_defaults(handler=...)` を使えば 1 行になる                                                                                                                                                                                                                                                                           |
-| A7  | `*/commands.py`                                | ハンドラ引数が無型の `argparse.Namespace`。mypy strict でもここだけ型検査が効かず、ノートブックや uncertainty 層から呼ぶとき Namespace を偽装する羽目になる。型付き関数に切り出す                                                                                                                                                                                                  |
-| A8  | `data/schema.py`                               | `RolloutDataset` から ESN 入力配列を取り出す変換が無く呼び出し側責務。Sprint 2 で 3 者が同じ抽出（NaN 行の扱い、エピソード境界を跨がない状態リセット）を各自実装するとコピペになる。**「エピソード境界でリザバー状態をリセットするか」は正しさに直結するので分散させない**                                                                                                         |
-| A9  | Phase 1 準備                                   | `check_esp` / `linear_memory_capacity` の引数を最小 Protocol（`ReservoirLike`）に置き換えると物理リザバー移植時の差し替え点になる。実装が 1 つのうちは前倒ししない                                                                                                                                                                                                                 |
+| #   | 対象            | 内容                                                                                                                                                                                                                                                                                                               |
+| --- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A3  | `esn/config.py` | `ESNConfig` にリザバー生成系と read-out 学習系が同居。diagnose 経路では後者（`ridge_alpha`/`washout`/`input_passthrough`）が効かないのにレポート JSON に記録され、読者が「この ridge_alpha でこの数値が出た」と誤読しうる。`ReservoirConfig` / `ReadoutConfig` への分割は破壊的変更なので design.md 改訂とセットで |
+| A6  | `cli/app.py`    | サブコマンド追加が 4 箇所同時編集を要求。argparse 標準の `set_defaults(handler=...)` を使えば 1 行になる                                                                                                                                                                                                           |
+| A7  | `*/commands.py` | ハンドラ引数が無型の `argparse.Namespace`。mypy strict でもここだけ型検査が効かず、ノートブックや uncertainty 層から呼ぶとき Namespace を偽装する羽目になる。型付き関数に切り出す                                                                                                                                  |
+| A9  | Phase 1 準備    | `check_esp` / `linear_memory_capacity` の引数を最小 Protocol（`ReservoirLike`）に置き換えると物理リザバー移植時の差し替え点になる。実装が 1 つのうちは前倒ししない                                                                                                                                                 |
 
 ## セキュリティ（公開前に対応）
 
-| #   | 対象         | 内容                                                                                                                                                                                                                                                                                                                                             |
-| --- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| S2  | `data/io.py` | `save_dataset` が `.npz` だけでなくサイドカー `.json` まで無警告上書き。`--output notes.npz` が既存の無関係な `notes.json` を破壊する（CWE-73）。`overwrite: bool = False` + CLI `--force`                                                                                                                                                       |
-| S3  | `cli/app.py` | `main()` に例外ハンドリングが無く、トレースバック（絶対パス・ユーザー名を含む）が stderr に出る。CLAUDE.md「エラーレスポンスにスタックトレースを含めない」に反する。公開後は issue への貼り付けで環境情報が漏れる（CWE-209）                                                                                                                     |
-| S4  | ログ全般     | 書き出し先の**絶対パス**を INFO ログに出している（`data/io.py`, `diagnostics/report.py`, `*/commands.py`）。ユーザー名が残る。INFO では相対パス、絶対パスは DEBUG へ                                                                                                                                                                             |
-| S5  | `LICENSE`    | Apache-2.0 付録の `Copyright [yyyy] [name of copyright owner]` が未記入。権利帰属が不明確                                                                                                                                                                                                                                                        |
-| S7  | `data/io.py` | 出所固有バリデータを `io.py` がトップレベル import している。Sprint 2 で `source == "openpi"` の分岐を足すと `io.py` が openpi ログパーサを import することになり、「openpi をランタイム依存に含めない」の担保が import 構造ではなく規律のみになる。`data/invariants.py`（依存は `schema.py` のみ）へ切り出し、`io` はレジストリを引くだけにする |
-| S8  | pre-commit   | 秘密情報の防御が `detect-private-key`（PEM のみ）だけで、しかも pre-commit は `make ci` に含まれない。`.gitignore` は `git add -f` で無力化されるため、`gitleaks` を pre-commit に追加し `make ci` からも走らせて `.gitignore` の網羅性への依存を下げる                                                                                          |
-| S9  | dev 依存     | `pip-audit` が既知脆弱性 2 件を報告: pygments 2.19.2 (PYSEC-2026-2987, fix 2.20.0) / pytest 9.0.2 (PYSEC-2026-1845, fix 9.0.3)。dev グループのみで本番配布物（numpy のみ）には入らない。`make ci` に pip-audit を追加して自動検出させる                                                                                                          |
+| #   | 対象         | 内容                                                                                                                                                                                                                                                    |
+| --- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S2  | `data/io.py` | `save_dataset` が `.npz` だけでなくサイドカー `.json` まで無警告上書き。`--output notes.npz` が既存の無関係な `notes.json` を破壊する（CWE-73）。`overwrite: bool = False` + CLI `--force`                                                              |
+| S3  | `cli/app.py` | `main()` に例外ハンドリングが無く、トレースバック（絶対パス・ユーザー名を含む）が stderr に出る。CLAUDE.md「エラーレスポンスにスタックトレースを含めない」に反する。公開後は issue への貼り付けで環境情報が漏れる（CWE-209）                            |
+| S4  | ログ全般     | 書き出し先の**絶対パス**を INFO ログに出している（`data/io.py`, `diagnostics/report.py`, `*/commands.py`）。ユーザー名が残る。INFO では相対パス、絶対パスは DEBUG へ                                                                                    |
+| S5  | `LICENSE`    | Apache-2.0 付録の `Copyright [yyyy] [name of copyright owner]` が未記入。権利帰属が不明確                                                                                                                                                               |
+| S8  | pre-commit   | 秘密情報の防御が `detect-private-key`（PEM のみ）だけで、しかも pre-commit は `make ci` に含まれない。`.gitignore` は `git add -f` で無力化されるため、`gitleaks` を pre-commit に追加し `make ci` からも走らせて `.gitignore` の網羅性への依存を下げる |
+| S9  | dev 依存     | `pip-audit` が既知脆弱性 2 件を報告: pygments 2.19.2 (PYSEC-2026-2987, fix 2.20.0) / pytest 9.0.2 (PYSEC-2026-1845, fix 9.0.3)。dev グループのみで本番配布物（numpy のみ）には入らない。`make ci` に pip-audit を追加して自動検出させる                 |
 
 ## パッケージング / uv
 

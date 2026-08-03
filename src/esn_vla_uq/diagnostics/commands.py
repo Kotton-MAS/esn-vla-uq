@@ -10,10 +10,10 @@ import argparse
 import logging
 from pathlib import Path
 
-from esn_vla_uq.diagnostics.report import (
+from esn_vla_uq.diagnostics.report import write_report
+from esn_vla_uq.diagnostics.runner import (
     DEFAULT_DIAGNOSTICS_N_INPUTS,
     run_diagnostics,
-    write_report,
 )
 from esn_vla_uq.esn.config import (
     DEFAULT_LEAK_RATE,
