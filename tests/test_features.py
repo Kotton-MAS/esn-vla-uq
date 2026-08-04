@@ -44,6 +44,7 @@ def test_default_feature_is_state(inputs: DatasetInputs) -> None:
         ("state", STATE_DIM),
         ("action", ACTION_DIM),
         ("state_action", STATE_DIM + ACTION_DIM),
+        ("state_action_chunk", STATE_DIM + ACTION_DIM + 2),
     ],
 )
 def test_feature_sets_produce_expected_dimension(
@@ -55,7 +56,12 @@ def test_feature_sets_produce_expected_dimension(
 
 def test_all_supported_feature_sets_are_covered_by_tests() -> None:
     """`FeatureSet` に値を足したらパラメータ化テストも増やすことを強制する。"""
-    assert set(SUPPORTED_FEATURE_SETS) == {"state", "action", "state_action"}
+    assert set(SUPPORTED_FEATURE_SETS) == {
+        "state",
+        "action",
+        "state_action",
+        "state_action_chunk",
+    }
 
 
 def test_values_are_float64(inputs: DatasetInputs) -> None:

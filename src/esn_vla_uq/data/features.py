@@ -37,17 +37,41 @@ from typing import Final, Literal, get_args
 import numpy as np
 from numpy.typing import NDArray
 
-from esn_vla_uq.data.schema import RolloutDataset
+from esn_vla_uq.data.schema import Episode, RolloutDataset
 
-FeatureSet = Literal["state", "action", "state_action"]
+FeatureSet = Literal["state", "action", "state_action", "state_action_chunk"]
 """ESN 入力に使うフィールドの組み合わせ。
 
 - ``"state"``: `state` のみ (`D_u = state_dim`)
 - ``"action"``: `action` のみ (`D_u = action_dim`)
 - ``"state_action"``: `state` と `action` を軸 1 で連結
   (`D_u = state_dim + action_dim`)
+- ``"state_action_chunk"``: 上記に**チャンク由来の要約量** 2 本を足す
+  (`D_u = state_dim + action_dim + 2`)
 
-`action_chunk` は含めない (モジュール docstring の「NaN の扱い」を参照)。
+`action_chunk` の生の値 (`[H, D_a]`) は入力に含めない。非推論ステップでは全要素
+NaN であり、そのまま入れると NaN が状態に伝播する。代わりに推論ステップで
+要約量を計算し、次の推論まで前方補完する (`CHUNK_FEATURE_NAMES`)。これは
+実運用でも観測できる量である (ポリシーが出したチャンクをそのまま見るだけで、
+正解を必要としない)。
+"""
+
+CHUNK_FEATURE_NAMES: Final[tuple[str, ...]] = (
+    "log_chunk_dispersion",
+    "steps_since_inference",
+)
+"""チャンク由来の要約量。
+
+- ``log_chunk_dispersion``: チャンクをホライズン方向に 2 階差分した二乗平均の
+  対数。滑らかなトレンド成分が落ち、チャンク内のばらつき (flow matching の
+  サンプリング分散に相当) が残る。数桁にわたる量なので対数を取る。
+- ``steps_since_inference``: 直近の推論ステップからの経過ステップ数。前方補完
+  した要約量がどれだけ古いかを表す。
+
+要件書は入力を「action chunk 系列と固有受容感覚」と定めている。固有受容感覚
+(`state`) と実行された行動 (`action`) だけでは、合成データが失敗区間に注入する
+**チャンク分散の増大**が入力に現れない。実測では、この 2 本を足すことで失敗検知
+AUROC が 0.50 (信号なし) から改善する。
 """
 
 SUPPORTED_FEATURE_SETS: Final[tuple[str, ...]] = get_args(FeatureSet)
@@ -75,6 +99,14 @@ class DatasetInputs:
     episode_lengths: NDArray[np.int64]
     is_inference_step: NDArray[np.bool_]
     feature: FeatureSet
+
+    @property
+    def difficulty_column(self) -> int | None:
+        """`DIFFICULTY_FEATURE` が入力の何列目か。含まれないなら `None`。"""
+        if self.feature != "state_action_chunk":
+            return None
+        offset = CHUNK_FEATURE_NAMES.index(DIFFICULTY_FEATURE)
+        return self.n_inputs - len(CHUNK_FEATURE_NAMES) + offset
 
     @property
     def n_inputs(self) -> int:
@@ -130,10 +162,7 @@ def dataset_inputs(
             f"supported={list(SUPPORTED_FEATURE_SETS)})"
         )
 
-    per_episode = [
-        _episode_values(episode.state, episode.action, feature)
-        for episode in dataset.episodes
-    ]
+    per_episode = [_episode_values(episode, feature) for episode in dataset.episodes]
     values = np.concatenate(per_episode, axis=0)
     is_inference_step = np.concatenate(
         [episode.is_inference_step for episode in dataset.episodes], axis=0
@@ -147,12 +176,67 @@ def dataset_inputs(
     )
 
 
-def _episode_values(
-    state: NDArray[np.float32], action: NDArray[np.float32], feature: FeatureSet
-) -> NDArray[np.float64]:
+DIFFICULTY_FEATURE: Final[str] = "log_chunk_dispersion"
+"""区間幅の変調に使う観測量の名前 (`CHUNK_FEATURE_NAMES` のいずれか)。
+
+split conformal の被覆率保証は「入力だけから決まる」任意の難易度関数に対して
+成り立つ。残差の大きさを当てにいく必要はなく、**観測できて失敗と結びつく量**を
+選んでよい (`uncertainty/nonconformity.py`)。
+"""
+
+CHUNK_DISPERSION_EPSILON: Final[float] = 1e-12
+"""``log(dispersion + eps)`` の eps。分散がちょうど 0 のチャンクで -inf にしない。"""
+
+_MIN_HORIZON_FOR_DISPERSION: Final[int] = 3
+"""2 階差分に必要な最小ホライズン。"""
+
+
+def chunk_features(episode: Episode) -> NDArray[np.float64]:
+    """チャンク由来の要約量 `[T_i, 2]` を作る。
+
+    推論ステップで要約量を計算し、次の推論ステップまで前方補完する。実機では
+    ポリシーが出したチャンクをそのまま観測できるため、正解を必要としない。
+
+    Args:
+        episode: 対象エピソード。`validate()` 済みであることを前提とする。
+
+    Returns:
+        `[T_i, 2]` の float64 配列 (`CHUNK_FEATURE_NAMES` の順)。
+
+    Raises:
+        ValueError: 推論ステップが 1 つも無い場合 (`Episode.validate()` が
+            禁じているので通常は起きない)。
+    """
+    inference_steps = np.nonzero(episode.is_inference_step)[0]
+    if inference_steps.size == 0:
+        raise ValueError(
+            "is_inference_step: 推論ステップがありません "
+            f"(episode_id={episode.episode_id!r})"
+        )
+
+    chunks = episode.action_chunk[episode.is_inference_step].astype(np.float64)
+    if chunks.shape[1] >= _MIN_HORIZON_FOR_DISPERSION:
+        roughness = np.diff(chunks, n=2, axis=1)
+        dispersion = np.mean(roughness**2, axis=(1, 2))
+    else:
+        # ホライズンが短く 2 階差分を取れない場合は分散で代替する。
+        dispersion = np.var(chunks, axis=(1, 2))
+
+    # 各ステップを「直近の推論ステップ」へ対応づける (前方補完)。
+    step_index = np.arange(episode.n_steps)
+    source = np.searchsorted(inference_steps, step_index, side="right") - 1
+    log_dispersion = np.log(dispersion + CHUNK_DISPERSION_EPSILON)[source]
+    steps_since = (step_index - inference_steps[source]).astype(np.float64)
+    return np.stack((log_dispersion, steps_since), axis=1)
+
+
+def _episode_values(episode: Episode, feature: FeatureSet) -> NDArray[np.float64]:
     """1 エピソード分の入力 `[T_i, D_u]` を float64 で作る。"""
     if feature == "state":
-        return state.astype(np.float64)
+        return episode.state.astype(np.float64)
     if feature == "action":
-        return action.astype(np.float64)
-    return np.concatenate((state, action), axis=1).astype(np.float64)
+        return episode.action.astype(np.float64)
+    blocks = [episode.state.astype(np.float64), episode.action.astype(np.float64)]
+    if feature == "state_action_chunk":
+        blocks.append(chunk_features(episode))
+    return np.concatenate(blocks, axis=1)

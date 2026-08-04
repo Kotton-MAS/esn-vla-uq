@@ -31,6 +31,11 @@ dependencies = [
     "numpy>=2.5.1",
 ]
 
+[project.optional-dependencies]
+# reliability diagram の作図にのみ使う。コア (ESN・診断・conformal・較正の数値) は
+# numpy だけで動く。図が無くても評価は止まらない (`calibration/plot.py`)。
+viz = ["matplotlib>=3.10"]
+
 [project.scripts]
 esn-vla-uq = "esn_vla_uq.cli:main"
 
@@ -61,6 +66,7 @@ include = [
 
 [dependency-groups]
 dev = [
+    "matplotlib>=3.10",
     "mypy>=1.19.1",
     "pip-audit>=2.10.1",
     "pre-commit>=4.6.0",
