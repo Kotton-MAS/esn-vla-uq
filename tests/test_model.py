@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-from esn_vla_uq.esn import ESN, ESNConfig
+from esn_vla_uq.esn import ESN, ESNConfig, RidgeReadout
 
 DELAY = 5
 N_TRAIN = 1500
@@ -203,3 +203,38 @@ def test_predict_rejects_changed_input_dimension(
     model = ESN(config).fit(inputs, targets)
     with pytest.raises(ValueError, match="入力次元"):
         model.predict(np.zeros((inputs.shape[0], inputs.shape[1] + 1)))
+
+
+def test_fit_with_zero_washout_keeps_every_step() -> None:
+    """`ESN.fit` 経由の `washout=0` が全ステップを使うこと (T2)。
+
+    `discard_washout` 単体は検証済みだったが、`ESN.fit` が `config.washout` を
+    どう解釈するかは未検証だった。washout=0 のとき、read-out は全ステップで
+    学習した結果と一致するはずである。
+    """
+    inputs = np.linspace(0.0, 1.0, 40).reshape(40, 1)
+    targets = np.sin(inputs)
+
+    esn = ESN(ESNConfig(n_reservoir=25, washout=0, seed=0)).fit(inputs, targets)
+
+    reference = RidgeReadout(
+        alpha=esn.config.ridge_alpha,
+        input_passthrough=esn.config.input_passthrough,
+    ).fit(esn.transform(inputs), inputs, targets)
+    np.testing.assert_allclose(esn.readout.w_out, reference.w_out)
+
+
+def test_fit_with_washout_drops_the_leading_steps() -> None:
+    """washout>0 では先頭を捨てた解と一致すること (T2 の対)。"""
+    inputs = np.linspace(0.0, 1.0, 40).reshape(40, 1)
+    targets = np.sin(inputs)
+    washout = 10
+
+    esn = ESN(ESNConfig(n_reservoir=25, washout=washout, seed=0)).fit(inputs, targets)
+
+    states = esn.transform(inputs)
+    reference = RidgeReadout(
+        alpha=esn.config.ridge_alpha,
+        input_passthrough=esn.config.input_passthrough,
+    ).fit(states[washout:], inputs[washout:], targets[washout:])
+    np.testing.assert_allclose(esn.readout.w_out, reference.w_out)

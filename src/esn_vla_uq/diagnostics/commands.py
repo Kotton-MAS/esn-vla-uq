@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import argparse
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
+from esn_vla_uq.cli import options
 from esn_vla_uq.diagnostics.report import write_report
 from esn_vla_uq.diagnostics.runner import (
     DEFAULT_DIAGNOSTICS_N_INPUTS,
@@ -67,7 +69,42 @@ def add_diagnose_arguments(parser: argparse.ArgumentParser) -> argparse.Argument
     return parser
 
 
+@dataclass(frozen=True)
+class DiagnoseOptions:
+    """`diagnose` の型付き設定。
+
+    `argparse.Namespace` の無型アクセスを `from_namespace` の 1 箇所に閉じ込め、
+    ハンドラ本体は型の付いた値だけを扱う (A7)。
+    """
+
+    seed: int
+    output_dir: Path
+    n_reservoir: int
+    spectral_radius: float
+    leak_rate: float
+    n_inputs: int
+    skip_memory_capacity: bool
+
+    @classmethod
+    def from_namespace(cls, args: argparse.Namespace) -> DiagnoseOptions:
+        """`Namespace` から型を検証しつつ取り出す。"""
+        return cls(
+            seed=options.get_int(args, "seed"),
+            output_dir=options.get_path(args, "output_dir"),
+            n_reservoir=options.get_int(args, "n_reservoir"),
+            spectral_radius=options.get_float(args, "spectral_radius"),
+            leak_rate=options.get_float(args, "leak_rate"),
+            n_inputs=options.get_int(args, "n_inputs"),
+            skip_memory_capacity=options.get_bool(args, "skip_memory_capacity"),
+        )
+
+
 def run_diagnose(args: argparse.Namespace) -> int:
+    """`diagnose` を実行する (`Namespace` の解釈のみを担う)。"""
+    return execute_diagnose(DiagnoseOptions.from_namespace(args))
+
+
+def execute_diagnose(opts: DiagnoseOptions) -> int:
     """リザバー診断を実行し JSON レポートを書き出す。
 
     Args:
@@ -76,21 +113,21 @@ def run_diagnose(args: argparse.Namespace) -> int:
     Returns:
         終了コード (成功時 0)。
     """
-    seed = int(args.seed)
+    seed = opts.seed
     config = ESNConfig(
-        n_reservoir=int(args.n_reservoir),
-        spectral_radius=float(args.spectral_radius),
-        leak_rate=float(args.leak_rate),
+        n_reservoir=opts.n_reservoir,
+        spectral_radius=opts.spectral_radius,
+        leak_rate=opts.leak_rate,
         seed=seed,
     )
     report = run_diagnostics(
         config,
-        n_inputs=int(args.n_inputs),
+        n_inputs=opts.n_inputs,
         seed=seed,
-        skip_memory_capacity=bool(args.skip_memory_capacity),
+        skip_memory_capacity=opts.skip_memory_capacity,
     )
     report.log_summary()
-    path = write_report(report, Path(args.output_dir))
+    path = write_report(report, opts.output_dir)
     logger.info(
         "diagnose done: n_reservoir=%d seed=%d esp_verdict=%s report=%s",
         config.n_reservoir,

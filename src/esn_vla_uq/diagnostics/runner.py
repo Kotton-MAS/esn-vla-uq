@@ -99,6 +99,7 @@ def run_diagnostics(
     """
     diagnostics_seed = config.seed if seed is None else seed
     reservoir = Reservoir(config, n_inputs)
+    spectral = summarize_spectral(reservoir)
 
     memory_capacity: MemoryCapacityMeasurement | None = None
     if not skip_memory_capacity:
@@ -122,8 +123,14 @@ def run_diagnostics(
         esn_config=config,
         seed=diagnostics_seed,
         n_inputs=n_inputs,
-        spectral=summarize_spectral(reservoir),
-        esp=check_esp(reservoir, seed=diagnostics_seed),
+        spectral=spectral,
+        # `rho(A)` は `summarize_spectral` が計算済み。同じ行列の固有値を
+        # 2 度求めない (P2。N=500 で diagnose 全体の約 18%)。
+        esp=check_esp(
+            reservoir,
+            seed=diagnostics_seed,
+            effective_spectral_radius=spectral.effective_spectral_radius,
+        ),
         memory_capacity=memory_capacity,
         data_source=SYNTHETIC_DATA_SOURCE,
     )

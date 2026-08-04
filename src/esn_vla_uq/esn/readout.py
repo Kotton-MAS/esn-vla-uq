@@ -53,7 +53,21 @@ class RidgeReadout:
     def design_matrix(
         self, states: NDArray[np.float64], inputs: NDArray[np.float64]
     ) -> NDArray[np.float64]:
-        """設計行列 `[1, u, x]` (または `[1, x]`) を組み立てる。"""
+        """設計行列を組み立てる。
+
+        `input_passthrough` が真なら `[1, u, x]`、偽なら `[1, x]`。先頭列は
+        バイアス項で、リッジ罰則の対象外にする (`fit` 参照)。
+
+        Args:
+            states: リザバー状態 `[T, N]`。
+            inputs: 入力系列 `[T, D_u]`。
+
+        Returns:
+            設計行列 `[T, P]`。`P` は `n_features` が返す値。
+
+        Raises:
+            ValueError: いずれかが 2 次元でない、または系列長が食い違う場合。
+        """
         x = _as_2d(states, "states")
         u = _as_2d(inputs, "inputs")
         if x.shape[0] != u.shape[0]:
@@ -71,7 +85,26 @@ class RidgeReadout:
         inputs: NDArray[np.float64],
         targets: NDArray[np.float64],
     ) -> RidgeReadout:
-        """閉形式のリッジ解を求めて `self` を返す。"""
+        """閉形式のリッジ解 ``W_out = (X^T X + alpha P)^{-1} X^T Y`` を求める。
+
+        逆行列は作らず `np.linalg.solve` で解く。バイアス列は罰則の対象外に
+        する (定数項を縮めると予測が系統的に原点へ寄るため)。
+
+        washout の除去は呼び出し側の責務である (`ESN.fit` が行う)。
+
+        Args:
+            states: リザバー状態 `[T, N]`。
+            inputs: 入力系列 `[T, D_u]`。`input_passthrough` が偽でも系列長の
+                検証に使うため必須。
+            targets: 目標 `[T, n_outputs]`。
+
+        Returns:
+            自分自身 (メソッドチェーン用)。
+
+        Raises:
+            ValueError: 設計行列と `targets` の系列長が食い違う場合。
+            numpy.linalg.LinAlgError: Gram 行列が特異な場合 (`alpha` を上げる)。
+        """
         design = self.design_matrix(states, inputs)
         y = _as_2d(targets, "targets")
         if design.shape[0] != y.shape[0]:
@@ -99,7 +132,19 @@ class RidgeReadout:
     def predict(
         self, states: NDArray[np.float64], inputs: NDArray[np.float64]
     ) -> NDArray[np.float64]:
-        """学習済み `W_out` で `[T, n_outputs]` を予測する。"""
+        """学習済み `W_out` で予測する。
+
+        Args:
+            states: リザバー状態 `[T, N]`。
+            inputs: 入力系列 `[T, D_u]`。
+
+        Returns:
+            予測 `[T, n_outputs]`。
+
+        Raises:
+            RuntimeError: `fit` を呼ぶ前に呼んだ場合。
+            ValueError: 設計行列の列数が学習時と食い違う場合。
+        """
         w_out = self.w_out
         design = self.design_matrix(states, inputs)
         if design.shape[1] != w_out.shape[0]:

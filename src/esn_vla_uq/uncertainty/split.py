@@ -36,7 +36,7 @@ SplitStrategy = Literal["within_task", "across_task"]
   被覆率保証はそのままは成立しない。
 """
 
-SUPPORTED_SPLIT_STRATEGIES: Final[tuple[str, ...]] = get_args(SplitStrategy)
+SUPPORTED_SPLIT_STRATEGIES: Final[tuple[SplitStrategy, ...]] = get_args(SplitStrategy)
 """`SplitStrategy` が許可する値の実行時タプル。"""
 
 DEFAULT_SPLIT_STRATEGY: Final[SplitStrategy] = "within_task"

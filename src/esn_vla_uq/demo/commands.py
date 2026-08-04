@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from esn_vla_uq.cli import options
 from esn_vla_uq.data.io import load_bundled_sample, load_dataset
 from esn_vla_uq.demo.animate import (
     DEFAULT_FPS,
@@ -20,6 +22,7 @@ from esn_vla_uq.uncertainty.conformal import DEFAULT_ALPHA
 from esn_vla_uq.uncertainty.nonconformity import (
     DEFAULT_SCORE_KIND,
     SUPPORTED_SCORE_KINDS,
+    ScoreKind,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,7 +96,44 @@ def add_demo_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
     return parser
 
 
+@dataclass(frozen=True)
+class DemoOptions:
+    """`demo` の型付き設定 (A7)。"""
+
+    seed: int
+    output_dir: Path
+    input: Path | None
+    output: Path | None
+    episode_id: str | None
+    alpha: float
+    score_kind: ScoreKind
+    n_reservoir: int
+    fps: int
+    max_frames: int
+
+    @classmethod
+    def from_namespace(cls, args: argparse.Namespace) -> DemoOptions:
+        """`Namespace` から型を検証しつつ取り出す。"""
+        return cls(
+            seed=options.get_int(args, "seed"),
+            output_dir=options.get_path(args, "output_dir"),
+            input=options.get_optional_path(args, "input"),
+            output=options.get_optional_path(args, "output"),
+            episode_id=options.get_optional_str(args, "episode_id"),
+            alpha=options.get_float(args, "alpha"),
+            score_kind=options.get_choice(args, "score_kind", SUPPORTED_SCORE_KINDS),
+            n_reservoir=options.get_int(args, "n_reservoir"),
+            fps=options.get_int(args, "fps"),
+            max_frames=options.get_int(args, "max_frames"),
+        )
+
+
 def run_demo(args: argparse.Namespace) -> int:
+    """`demo` を実行する (`Namespace` の解釈のみを担う)。"""
+    return execute_demo(DemoOptions.from_namespace(args))
+
+
+def execute_demo(opts: DemoOptions) -> int:
     """デモアニメーションを生成する。
 
     Args:
@@ -102,28 +142,26 @@ def run_demo(args: argparse.Namespace) -> int:
     Returns:
         終了コード (成功時 0)。
     """
-    seed = int(args.seed)
-    config = ESNConfig(n_reservoir=int(args.n_reservoir), seed=seed)
-    input_path: Path | None = args.input
+    seed = opts.seed
+    config = ESNConfig(n_reservoir=opts.n_reservoir, seed=seed)
+    input_path = opts.input
     dataset = load_bundled_sample() if input_path is None else load_dataset(input_path)
 
     frames = build_demo_frames(
         dataset,
         config,
-        alpha=float(args.alpha),
-        score_kind=args.score_kind,
+        alpha=opts.alpha,
+        score_kind=opts.score_kind,
         split_seed=seed,
-        episode_id=args.episode_id,
+        episode_id=opts.episode_id,
     )
-    output: Path | None = args.output
+    output = opts.output
     path = (
         output
         if output is not None
-        else Path(args.output_dir) / REPORT_SUBDIR / DEFAULT_FILENAME
+        else opts.output_dir / REPORT_SUBDIR / DEFAULT_FILENAME
     )
-    write_demo_animation(
-        frames, path, fps=int(args.fps), max_frames=int(args.max_frames)
-    )
+    write_demo_animation(frames, path, fps=opts.fps, max_frames=opts.max_frames)
 
     ratio = frames.uncertainty_ratio_after_onset()
     lag = frames.detection_lag_steps()
