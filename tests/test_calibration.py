@@ -336,3 +336,16 @@ def test_synthetic_report_does_not_claim_inverted_detection(
     from esn_vla_uq.calibration.runner import INVERTED_DETECTION_CAVEAT
 
     assert INVERTED_DETECTION_CAVEAT not in report.caveats
+
+
+def test_detection_is_always_marked_exploratory(report: CalibrationReport) -> None:
+    """失敗検知が探索的な診断値であることを、どのデータでも明示すること。
+
+    合成データでは AUROC 0.87 が出るが、これは生成器がチャンク分散と失敗を
+    結びつけて作っているためで、実 openpi ログでは再現しない (0.457〜0.477)。
+    数値だけを見た読み手が「失敗検知できる」と読まないよう常に付ける
+    (docs/design.md 10.14 節)。
+    """
+    from esn_vla_uq.calibration.runner import DETECTION_IS_EXPLORATORY_CAVEAT
+
+    assert DETECTION_IS_EXPLORATORY_CAVEAT in report.caveats

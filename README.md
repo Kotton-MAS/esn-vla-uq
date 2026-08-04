@@ -1,8 +1,11 @@
 # esn-vla-uq
 
-Closed-form, ensemble-free uncertainty quantification for VLA (vision-language-action)
-policies, using an Echo State Network with a ridge read-out and split conformal
-prediction.
+Closed-form, ensemble-free **calibrated prediction intervals** for VLA
+(vision-language-action) policies, using an Echo State Network with a ridge read-out and
+split conformal prediction.
+
+The coverage guarantee is validated on real `openpi` rollouts. **Failure detection is
+not a claim of this release** — see [Scope](#scope).
 
 [日本語版 README](README.ja.md)
 
@@ -30,8 +33,12 @@ uv run esn-vla-uq demo --output outputs/demo.gif
 ```
 
 The lower panel is the conformal prediction interval half-width — the per-step
-uncertainty score. On the episode shown it is **1.13x higher** after failure onset than
+uncertainty score. On the episode shown it is 1.13x higher after failure onset than
 before.
+
+**This is synthetic data, and the rise reflects how the generator was built.** The same
+relationship does not hold on real openpi rollouts (see [Scope](#scope)). The demo shows
+what the output looks like, not that the score predicts failure.
 
 The rise is modest **by design**: the width is bounded to at most a 2x spread so that
 it cannot be distorted by the observable's dynamic range (see below). The *ordering* of
@@ -60,14 +67,13 @@ candidate for porting onto a physical reservoir later.
 
 Nominal coverage 90%, averaged over 20 calibration/test splits:
 
-| score        | interval width  | coverage      | mean half-width | failure-detection AUROC |
-| ------------ | --------------- | ------------- | --------------- | ----------------------- |
-| `absolute`   | constant        | 0.903 ± 0.027 | 0.0525          | **0.500 ± 0.000**       |
-| `normalized` | varies per step | 0.903 ± 0.026 | **0.0486**      | 0.871                   |
+| score        | interval width  | coverage      | mean half-width |
+| ------------ | --------------- | ------------- | --------------- |
+| `absolute`   | constant        | 0.903 ± 0.027 | 0.0525          |
+| `normalized` | varies per step | 0.903 ± 0.026 | **0.0486**      |
 
-`absolute` scores exactly 0.5 **by definition**: a constant interval width means a
-constant uncertainty score, so every step ties. `normalized` matches its coverage with a
-narrower average interval *and* can tell steps apart, so it is the default.
+`normalized` matches `absolute`'s coverage with a narrower average interval, so it is
+the default.
 
 ## Results on real openpi rollouts
 
@@ -79,26 +85,35 @@ narrower average interval *and* can tell steps apart, so it is the default.
 | `within_task` | **0.9033 ± 0.0102** | 0.0029 | 0.250           |
 | `across_task` | 0.8977 ± 0.0397     | 0.0020 | 0.297           |
 
-**Coverage holds on real data.** With 10 episodes it was 0.881 ± 0.049; with 100 the
-spread shrank by about 5x — exactly what the "effective sample size is the number of
-episodes" argument predicts. `within_task` having a quarter the variance of
-`across_task` also matches the exchangeability argument.
+**Coverage holds on real data across four collections.** With 10 episodes it was
+0.881 ± 0.049; with 100 the spread shrank about 5x — exactly what the "effective sample
+size is the number of episodes" argument predicts.
 
-**Failure detection is still undecided.** Only 1 of the 100 episodes failed —
-`pi0_libero` succeeds ~99% of the time on `libero_spatial` — so the AUROC (~0.46) rests
-on a single episode's steps and supports no conclusion either way. Settling it needs a
-harder suite or a weaker policy, not more trials of the same one.
+**`across_task` breaks down on long-horizon tasks**, which is what the exchangeability
+argument predicts: calibration and test come from different task distributions, so the
+guarantee does not transfer. On `libero_10` it drops to 0.779 with 17x the ECE. This is
+why `within_task` is the default.
 
 **Collection is not reproducible.** pi0 samples its actions (flow matching), so the same
-`--seed` gives different rollouts; two collections failed on *different* episodes. The
-`--seed` only fixes the LIBERO initial states. Analysis of an already-collected log *is*
-reproducible.
+`--seed` gives different rollouts. The `--seed` only fixes the LIBERO initial states.
+Analysis of an already-collected log *is* reproducible.
 
-**Coverage is noisier than the step count suggests.** Steps within an episode are
-strongly correlated, so the effective sample size is the number of *episodes* (8 in
-calibration), not the number of steps (~1,500). A single split's coverage ranges from
-0.63 to 1.00; the mean over 30 splits is 0.896. `calibrate` therefore evaluates 20
-splits by default and reports mean and spread rather than a single number.
+## Scope
+
+**What this release establishes:** prediction intervals with a finite-sample coverage
+guarantee, validated on real openpi rollouts, plus reservoir diagnostics.
+
+**What it does not:** that the uncertainty score detects failures. `calibrate` still
+reports a failure-detection AUROC, but it is an exploratory diagnostic. On real openpi
+rollouts it sits at chance (0.457–0.477); the high value on synthetic data (0.87) comes
+from the generator having been built with that relationship in it. Alternative
+observables were evaluated and none survived a within-task check — with 23 failures
+spread over 8 tasks there are only 1–3 failures per task, and per-task AUROC swings
+between 0.000 and 1.000.
+
+Revisiting this needs 5–10 failures per task and a setting where failures other than
+timeout occur; LIBERO has no early-termination condition, so every observed failure was
+the policy running out of steps. See `docs/design.md` §10.14.
 
 ## Reservoir diagnostics
 
