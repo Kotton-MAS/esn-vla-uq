@@ -72,10 +72,24 @@ SUPPORTED_SCORE_KINDS: Final[tuple[ScoreKind, ...]] = get_args(ScoreKind)
 DEFAULT_SCORE_KIND: Final[ScoreKind] = "normalized"
 """既定のスコア。`absolute` は入力に依存しない定数幅になるため既定にしない。"""
 
-DIFFICULTY_CLIP_QUANTILE: Final[float] = 0.02
-"""中心化した対数難易度を丸め込む分位点 (fit 集合での分布)。
+DIFFICULTY_SPREAD: Final[float] = 2.0
+"""難易度 ``g(x)`` の最大値と最小値の比。
 
-観測量が外れ値を取ったときに区間幅が発散しないようにする。
+``g`` は観測量の**順位** ``u in [0, 1]`` から ``spread ** (u - 0.5)`` で作るので、
+値域は ``[spread ** -0.5, spread ** 0.5]`` に**構造的に収まる**。2 なら約
+0.71〜1.41 で、区間幅の変動は最大 2 倍。
+
+**値の選び方**: AUROC は順位だけで決まるため spread を変えても**検知性能は
+1 ビットも変わらない** (実測で確認: 実 openpi 0.4513 / 合成 0.8706 が
+spread 2/4/8/16 のすべてで同一)。変わるのは被覆率と幅で、小さいほど被覆率が
+名目に近い。したがって主たる保証である被覆率を優先して 2 を選ぶ。適応幅を
+広げたい場合は ``fit_score_model(..., spread=...)`` で上書きする。
+
+生の ``exp(log 観測量)`` を使っていたときは値域が観測量の分布に丸ごと依存した。
+合成データでは log 分散のレンジが 4.42 (約 83 倍) で収まっていたが、実 openpi
+ログでは 9.74 (約 17,000 倍) あり、``g`` が 528 まで振れた。それを吸収するため
+分位点 ``q`` が 46 まで膨らみ、平均区間幅が行動スケールの 1,858 倍になった
+(`docs/design.md` 10.5 節)。順位に変えれば観測量の分布形に依存しない。
 """
 
 _DIMENSION_SCALE_FLOOR: Final[float] = 1e-9
@@ -98,8 +112,8 @@ class ScoreModel:
     kind: ScoreKind
     dimension_scale: NDArray[np.float64]
     difficulty_column: int | None
-    log_difficulty_center: float = 0.0
-    log_difficulty_bounds: tuple[float, float] | None = None
+    difficulty_reference: NDArray[np.float64] | None = None
+    difficulty_spread: float = DIFFICULTY_SPREAD
 
     def difficulty(
         self, states: NDArray[np.float64], inputs: NDArray[np.float64]
@@ -111,15 +125,16 @@ class ScoreModel:
         よう中心化してから ``exp`` する。中心化により ``q`` が `absolute` の
         分位点と同程度の大きさに収まる。
         """
-        if self.difficulty_column is None:
+        if self.difficulty_column is None or self.difficulty_reference is None:
             return np.ones((states.shape[0], 1), dtype=np.float64)
-        log_difficulty = inputs[:, self.difficulty_column : self.difficulty_column + 1]
-        centered = log_difficulty - self.log_difficulty_center
-        if self.log_difficulty_bounds is not None:
-            lower, upper = self.log_difficulty_bounds
-            centered = np.clip(centered, lower, upper)
-        result: NDArray[np.float64] = np.exp(centered)
-        return result
+        observable = inputs[:, self.difficulty_column]
+        # fit 集合における順位 (経験分布関数) へ写す。単調変換なので**順序は
+        # 完全に保たれる**。AUROC は順位だけで決まるため、この変換で失敗検知の
+        # 成績は 1 ビットも変わらない。変わるのは幅の値域だけである。
+        rank = np.searchsorted(self.difficulty_reference, observable, side="right")
+        quantile = rank / float(self.difficulty_reference.shape[0])
+        result: NDArray[np.float64] = self.difficulty_spread ** (quantile - 0.5)
+        return result.reshape(-1, 1)
 
     def scale(
         self, states: NDArray[np.float64], inputs: NDArray[np.float64]
@@ -156,7 +171,7 @@ def fit_score_model(
     inputs: NDArray[np.float64],
     *,
     difficulty_column: int | None = None,
-    clip_quantile: float = DIFFICULTY_CLIP_QUANTILE,
+    spread: float = DIFFICULTY_SPREAD,
 ) -> ScoreModel:
     """スコアモデルを学習する。
 
@@ -175,7 +190,7 @@ def fit_score_model(
         inputs: fit 集合の入力 `[N, D_u]`。
         difficulty_column: 難易度として読む入力の列。`None` なら `normalized`
             を指定しても定数幅になる。
-        clip_quantile: 中心化した対数難易度を丸め込む分位点。
+        spread: ``g`` の最大値と最小値の比。
 
     Returns:
         学習済みの `ScoreModel`。
@@ -192,17 +207,11 @@ def fit_score_model(
     if kind == "absolute" or difficulty_column is None:
         return ScoreModel(kind=kind, dimension_scale=scale, difficulty_column=None)
 
-    log_difficulty = inputs[:, difficulty_column]
-    center = float(np.median(log_difficulty))
-    centered = log_difficulty - center
-    bounds = (
-        float(np.quantile(centered, clip_quantile)),
-        float(np.quantile(centered, 1.0 - clip_quantile)),
-    )
+    reference = np.sort(np.asarray(inputs[:, difficulty_column], dtype=np.float64))
     return ScoreModel(
         kind=kind,
         dimension_scale=scale,
         difficulty_column=difficulty_column,
-        log_difficulty_center=center,
-        log_difficulty_bounds=bounds,
+        difficulty_reference=reference,
+        difficulty_spread=spread,
     )

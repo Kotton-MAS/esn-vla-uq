@@ -30,8 +30,13 @@ uv run esn-vla-uq demo --output outputs/demo.gif
 ```
 
 The lower panel is the conformal prediction interval half-width — the per-step
-uncertainty score. On the episode shown it is **3.6x higher** after failure onset than
+uncertainty score. On the episode shown it is **1.13x higher** after failure onset than
 before.
+
+The rise is modest **by design**: the width is bounded to at most a 2x spread so that
+it cannot be distorted by the observable's dynamic range (see below). The *ordering* of
+the uncertainty score — which is what failure detection uses — is unaffected by that
+bound.
 
 > **The uncertainty reacts to the failure; it does not anticipate it.** The rise happens
 > **15 steps after** onset, not before. The signal that drives it (action-chunk
@@ -55,15 +60,33 @@ candidate for porting onto a physical reservoir later.
 
 Nominal coverage 90%, averaged over 20 calibration/test splits:
 
-| score        | interval width  | coverage      | ECE    | failure-detection AUROC |
-| ------------ | --------------- | ------------- | ------ | ----------------------- |
-| `absolute`   | constant        | 0.903 ± 0.027 | 0.0022 | **0.500 ± 0.000**       |
-| `normalized` | varies per step | 0.864 ± 0.068 | 0.0416 | 0.869 ± 0.075           |
+| score        | interval width  | coverage      | mean half-width | failure-detection AUROC |
+| ------------ | --------------- | ------------- | --------------- | ----------------------- |
+| `absolute`   | constant        | 0.903 ± 0.027 | 0.0525          | **0.500 ± 0.000**       |
+| `normalized` | varies per step | 0.903 ± 0.026 | **0.0486**      | 0.871                   |
 
 `absolute` scores exactly 0.5 **by definition**: a constant interval width means a
-constant uncertainty score, so every step ties. It is the better-calibrated option;
-`normalized` is the one that can tell steps apart. Pick by use case — the default is
-`normalized`.
+constant uncertainty score, so every step ties. `normalized` matches its coverage with a
+narrower average interval *and* can tell steps apart, so it is the default.
+
+## Results on real openpi rollouts
+
+10 episodes from `libero_spatial` (1 trial per task, 90% success rate), collected with
+`scripts/collect_openpi_rollouts.py` against a live `pi0_libero` policy server:
+
+| score        | coverage      | mean half-width | failure-detection AUROC |
+| ------------ | ------------- | --------------- | ----------------------- |
+| `absolute`   | 0.888 ± 0.042 | 2.90            | 0.500                   |
+| `normalized` | 0.881 ± 0.049 | **2.21**        | 0.451                   |
+
+**Coverage holds on real data** — and under an `across_task` split, where the
+exchangeability assumption behind the guarantee does not even hold.
+
+**Failure detection does not reproduce the synthetic result, and the data cannot settle
+it either way.** Only 1 of the 10 episodes failed, so the AUROC rests on a single
+episode. The label is also coarser: openpi has no notion of a failure onset, so the
+whole failed episode is marked positive, which is not comparable to the synthetic
+`failure_onset` numbers. Deciding this needs a collection with more failures.
 
 **Coverage is noisier than the step count suggests.** Steps within an episode are
 strongly correlated, so the effective sample size is the number of *episodes* (8 in

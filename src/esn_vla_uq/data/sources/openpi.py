@@ -15,11 +15,12 @@ openpi のパッケージも policy server も import しない。収集時に�
 | --- | --- | --- |
 | `observation/state` | 8 次元 | eef 位置(3) + 軸角(3) + グリッパ(2) |
 | action | 7 次元 | 6 DoF デルタ + グリッパ |
-| `action_horizon` | 50 | pi0 が 1 回の推論で返すチャンク長 |
+| `action_horizon` | 10 | `pi0_libero` の学習設定による (クラス既定は 50) |
 | `replan_steps` | 5 | 実際に実行してから再計画するステップ数 |
 
 合成データ (H=16、16 ステップ間隔) とは値が違うが、`RolloutDataset` は
-`chunk_horizon` をフィールドで持つため同じスキーマで共存できる。
+`chunk_horizon` をフィールドで持つため同じスキーマで共存できる。実収集したログで
+H=10 / 間隔 5 を確認済み。
 
 ## ログ形式
 
