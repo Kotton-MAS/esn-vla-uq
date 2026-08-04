@@ -17,10 +17,44 @@ VLA (vision-language-action) ポリシーの**閉形式・アンサンブル不�
 
 ```bash
 uv sync
-uv run esn-vla-uq calibrate     # 被覆率 / ECE / 失敗検知 AUROC
-uv run esn-vla-uq calibrate --input <openpi ログのディレクトリ>   # 収集した実ログ
+uv run esn-vla-uq calibrate     # 同梱の合成データで被覆率 / ECE
 uv run esn-vla-uq diagnose      # スペクトル半径 / ESP / メモリ容量
 ```
+
+サブコマンドは 4 つあります。
+
+| コマンド          | 内容                                               |
+| ----------------- | -------------------------------------------------- |
+| `calibrate`       | conformal 予測区間・被覆率・reliability curve・ECE |
+| `diagnose`        | リザバー診断 (スペクトル半径・ESP・メモリ容量)     |
+| `gen-sample-data` | 同梱の合成ロールアウトを再生成する                 |
+| `demo`            | 上のアニメーション (`[viz]` が要ります)            |
+
+`calibrate` と `demo` は `--input` でデータセットを読みます。省略すると同梱の合成
+データ、`.npz` を渡すと保存済みデータセット、**ディレクトリ**を渡すと収集した openpi
+ロールアウトとして読みます。`diagnose` は `ESNConfig` からリザバーを構築するので
+データセットを取らず、`gen-sample-data` は書き出す側です。
+
+## 実 openpi ロールアウトを使う
+
+openpi の評価スクリプトはロールアウトを保存しません (replay 動画を書くだけ) ので、
+収集は別の手順になります。`scripts/collect_openpi_rollouts.py` が openpi の LIBERO
+評価ループをなぞって state / action / action chunk を記録します。
+
+```bash
+# 1. openpi 側: policy server を起動 (openpi 側の環境)
+cd path/to/openpi && uv run scripts/serve_policy.py --env LIBERO
+
+# 2. LIBERO クライアント側 (openpi の examples/libero/.venv、Python 3.8)
+python path/to/esn-vla-uq/scripts/collect_openpi_rollouts.py \
+    --output-dir outputs/openpi_logs --task-suite-name libero_10
+
+# 3. こちらへ戻る (Python 3.12)
+uv run esn-vla-uq calibrate --input outputs/openpi_logs --split within_task
+```
+
+このスクリプト**だけ**が openpi と LIBERO を必要とし、wheel にも sdist にも含めて
+いません。パッケージ本体は収集済みログを読むだけで、依存は numpy のみです。
 
 ## デモ
 
@@ -137,12 +171,9 @@ Echo State Property は単一の数値ではなく、**3 指標と総合判定**
 
 ## 未実装
 
-- **openpi の実ロールアウトはまだ収集していません。** `OpenpiLogSource` と収集
-  スクリプトは openpi の実装を読んで書いてありますが、policy server を実際に動かして
-  ログを取る作業は未了です (GPU と LIBERO のセットアップが要ります)。テストは openpi
-  実出力と同じ形状 (`chunk_horizon=50`、推論間隔 5) のフィクスチャで行っています。
 - デモへの実 LIBERO 映像の取り込み (現状の映像パネルは合成データによる代替)。
 - VLM 特徴量の注入 (要件書で v0.2 以降に延期)。
+- 失敗検知 — 本リリースの対象外とした理由は [スコープ](#%E3%82%B9%E3%82%B3%E3%83%BC%E3%83%97) を参照。
 
 ## 開発
 
@@ -159,15 +190,19 @@ make fmt     # ruff format (ファイルを書き換える)
 
 ```
 src/esn_vla_uq/
-├── linalg.py       # スペクトル量の共有実装 (最下層)
-├── provenance.py   # DataSource (最下層)
-├── esn/            # リザバー・リッジ read-out・モデル
-├── diagnostics/    # スペクトル半径 / ESP / メモリ容量
-├── data/           # スキーマ・不変条件・sources/・合成生成・入出力・特徴量
-├── uncertainty/    # 予測タスク・分割・非適合度・split conformal
-├── calibration/    # 被覆率 / ECE / reliability diagram
-├── demo/           # デモアニメーション (フレームデータと描画を分離)
-└── cli/            # argparse エントリポイント
+├── linalg.py        # スペクトル量の共有実装 (最下層)
+├── provenance.py    # DataSource (最下層)
+├── logging_paths.py # ログ用のパス表記 (最下層)
+├── esn/             # リザバー・リッジ read-out・モデル
+├── diagnostics/     # スペクトル半径 / ESP / メモリ容量
+├── data/            # スキーマ・不変条件・sources/ (合成 + openpi)・入出力・特徴量
+├── uncertainty/     # 予測タスク・分割・非適合度・split conformal
+├── calibration/     # 被覆率 / ECE / reliability diagram
+├── demo/            # デモアニメーション (フレームデータと描画を分離)
+└── cli/             # argparse エントリポイント・型付きオプション・--input の解決
+
+scripts/
+└── collect_openpi_rollouts.py   # openpi と LIBERO を必要とする唯一のファイル
 ```
 
 ## ドキュメント
