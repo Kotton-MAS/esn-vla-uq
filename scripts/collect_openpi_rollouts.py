@@ -140,10 +140,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resize-size", type=int, default=DEFAULT_RESIZE_SIZE)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument(
-        "--policy",
+        "--policy-label",
         type=str,
-        default="pi0_libero",
-        help="レポートに記録するポリシー名 (推論そのものには影響しない)",
+        default=None,
+        help=(
+            "ポリシー名を明示指定する。既定では policy server が申告する "
+            "メタデータから取る (推奨。取り違えを防ぐ)"
+        ),
     )
     return parser
 
@@ -156,11 +159,21 @@ def write_manifest(
     state_dim: int,
     action_dim: int,
     chunk_horizon: int,
+    policy: str,
+    server_metadata: dict[str, object],
 ) -> Path:
-    """マニフェストを書き出す。"""
+    """マニフェストを書き出す。
+
+    Args:
+        policy: ポリシー名。policy server が申告した値を優先する。
+        server_metadata: policy server が接続時に送ってくるメタデータ全体。
+            **加工せずそのまま残す**。何が配信されていたかを後から検証できる
+            唯一の記録であり、こちらで解釈して削ると取り違えを検出できなくなる。
+    """
     manifest = {
         "schema_version": LOG_SCHEMA_VERSION,
-        "policy": str(args.policy),
+        "policy": policy,
+        "server_metadata": server_metadata,
         "task_suite": str(args.task_suite_name),
         "seed": int(args.seed),
         "control_hz": CONTROL_HZ,
@@ -208,6 +221,13 @@ def main(argv: list[str] | None = None) -> int:
     task_suite = benchmark.get_benchmark_dict()[args.task_suite_name]()
     max_steps = MAX_STEPS_BY_SUITE[args.task_suite_name]
     client = websocket_client_policy.WebsocketClientPolicy(args.host, args.port)
+    # **ポリシー名は利用者の申告ではなくサーバの申告を使う。** 実際に
+    # `serve_policy.py --env LIBERO` が配信するのは pi05_libero だが、以前は
+    # コマンドラインの既定値 "pi0_libero" をそのまま記録しており、収集ログの
+    # 出自が事実と食い違っていた (chunk_horizon が 10 だったことから発覚)。
+    server_metadata = dict(client.get_server_metadata())
+    policy = _resolve_policy_name(args, server_metadata)
+    logger.info("policy server: policy=%s metadata=%s", policy, server_metadata)
 
     records: list[EpisodeRecord] = []
     chunk_horizon = 0
@@ -308,6 +328,8 @@ def main(argv: list[str] | None = None) -> int:
         state_dim=int(records[0].states[0].shape[0]),
         action_dim=int(records[0].actions[0].shape[0]),
         chunk_horizon=chunk_horizon,
+        policy=policy,
+        server_metadata=server_metadata,
     )
     n_success = sum(1 for record in records if record.success)
     logger.info(
@@ -317,6 +339,28 @@ def main(argv: list[str] | None = None) -> int:
         path.name,
     )
     return 0
+
+
+def _resolve_policy_name(
+    args: argparse.Namespace, server_metadata: dict[str, object]
+) -> str:
+    """記録するポリシー名を決める。
+
+    `--policy-label` が明示されていればそれを使い、無ければサーバのメタデータ
+    から探す。どちらも無ければ `"unknown"` にする。**推測で名前を埋めない。**
+    """
+    label = getattr(args, "policy_label", None)
+    if isinstance(label, str) and label:
+        return label
+    for key in ("policy_name", "config", "name", "policy"):
+        value = server_metadata.get(key)
+        if isinstance(value, str) and value:
+            return value
+    logger.warning(
+        "policy server がポリシー名を申告しませんでした。"
+        "manifest には 'unknown' を記録します (--policy-label で明示できます)"
+    )
+    return "unknown"
 
 
 def _quat2axisangle(quat: NDArray[np.float64]) -> NDArray[np.float64]:

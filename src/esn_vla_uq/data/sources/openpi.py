@@ -15,12 +15,13 @@ openpi のパッケージも policy server も import しない。収集時に�
 | --- | --- | --- |
 | `observation/state` | 8 次元 | eef 位置(3) + 軸角(3) + グリッパ(2) |
 | action | 7 次元 | 6 DoF デルタ + グリッパ |
-| `action_horizon` | 10 | `pi0_libero` の学習設定による (クラス既定は 50) |
+| `action_horizon` | 設定による | `pi0_libero` は 50、`pi05_libero` は 10 |
 | `replan_steps` | 5 | 実際に実行してから再計画するステップ数 |
 
 合成データ (H=16、16 ステップ間隔) とは値が違うが、`RolloutDataset` は
-`chunk_horizon` をフィールドで持つため同じスキーマで共存できる。実収集したログで
-H=10 / 間隔 5 を確認済み。
+`chunk_horizon` をフィールドで持つため同じスキーマで共存できる。実収集したログでは
+`pi05_libero` (`serve_policy.py --env LIBERO` の既定) が配信されており H=10 /
+間隔 5 だった。`pi0_libero` を配信すれば H=50 になる。
 
 ## ログ形式
 
@@ -36,6 +37,10 @@ openpi の評価スクリプトは**ロールアウトを保存しない** (repl
 `manifest.json` の必須キー: `schema_version`, `policy`, `task_suite`,
 `control_hz`, `state_dim`, `action_dim`, `chunk_horizon`, `replan_steps`,
 `episodes` (各要素に `episode_id`, `task_name`, `success`, `n_steps`)。
+任意キー `server_metadata` には policy server が申告した内容がそのまま入る。
+
+`policy` は**収集時に policy server が申告した名前**であり、利用者が付けた
+ラベルではない (収集スクリプトの docstring を参照)。
 
 エピソード npz の配列:
 
