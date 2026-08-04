@@ -166,6 +166,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--task-suite-name", type=str, default="libero_spatial")
     parser.add_argument("--num-trials-per-task", type=int, default=10)
+    # 失敗率はタスクによって大きく違う (libero_10 で 0/10 〜 7/10)。失敗を集めたい
+    # ときにスイート全体を回すのは無駄が大きく、タスク難易度という交絡も入る。
+    parser.add_argument(
+        "--task-ids",
+        type=int,
+        nargs="+",
+        default=None,
+        help="収集するタスク番号 (既定: スイート全体)",
+    )
     parser.add_argument("--host", type=str, default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--replan-steps", type=int, default=DEFAULT_REPLAN_STEPS)
@@ -265,7 +274,16 @@ def main(argv: list[str] | None = None) -> int:
 
     records: list[EpisodeRecord] = []
     chunk_horizon = 0
-    for task_id in range(task_suite.n_tasks):
+    task_ids = (
+        list(range(task_suite.n_tasks))
+        if args.task_ids is None
+        else list(args.task_ids)
+    )
+    for task_id in task_ids:
+        if not 0 <= task_id < task_suite.n_tasks:
+            raise ValueError(
+                f"--task-ids: [0, {task_suite.n_tasks}) の範囲で指定してください (actual={task_id})"
+            )
         task = task_suite.get_task(task_id)
         initial_states = task_suite.get_task_init_states(task_id)
         task_bddl = (
