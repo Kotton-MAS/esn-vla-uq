@@ -2,23 +2,57 @@
 
 `docs/design.md` 8 節の未解決論点 3 (残差の正規化方法) への回答。2 種類を実装する。
 
-- ``"absolute"``: ``s = max_j |r_j|``
-- ``"normalized"``: ``s = max_j |r_j| / (sigma_j(x) + beta)``
+- ``"absolute"``: ``s = max_j |r_j| / c_j``
+- ``"normalized"``: ``s = max_j |r_j| / (c_j * g(x))``
 
-`sigma(x)` は「この入力における残差の大きさ」の推定値で、リザバー状態から
-``log(|r| + eps)`` を予測する第 2 の ridge read-out で求める
-(Papadopoulos らの normalized nonconformity)。
+``c_j`` は**次元ごとの定数スケール** (残差の中央値)、``g(x)`` は**入力ごとの
+スカラー難易度**。
 
-**2 つを実装するのは比較のためではなく、`absolute` では要件を満たせないことを
-示すため。** `absolute` の区間幅は入力に依存しない定数になる。被覆率は名目値どおりに
-なるが、全ステップで同じ幅なので「どのステップが危ないか」を一切区別しない。
-要件書が求めるデモ GIF (失敗直前に不確実性バーが跳ねる) や失敗検知は
-`normalized` でしか成立しない。この対比は
-`tests/test_conformal.py::test_absolute_score_cannot_discriminate` が数値で固定する。
+**次元スケールを先に割る理由**: 合成データの残差中央値は 6 DoF デルタが
+0.005〜0.007 に対しグリッパが 0.026 と約 5 倍ある。次元をそのまま比べると
+``max_j`` がグリッパ次元に支配され、他の次元の情報が捨てられる。
 
-多次元目標の扱い: `action` は 7 次元ある。次元ごとに独立した区間を出すと被覆率が
-次元ごとの周辺被覆になり「区間に入った」の意味が曖昧になるため、次元方向の
-max でスカラー化し、**全次元が同時に区間内に入る確率**として被覆率を定義する。
+## 難易度 g(x) を「観測量」から取る理由
+
+``g(x)`` は入力に含まれる観測量 (`data/features.py` の `DIFFICULTY_FEATURE`、
+チャンク分散の対数) を、fit 集合での中央値が 1 になるよう中心化して使う。
+**残差の大きさを推定するモデルは使わない。**
+
+split conformal の被覆率保証は「較正データを見ずに、入力だけから決まる」任意の
+``sigma(x)`` に対して成り立つ。``sigma`` が残差の良い推定である必要は無い。
+推定が下手なら区間幅が無駄に広くなるだけで、被覆率は保たれる。この自由度を
+使い、**観測できて失敗と結びつく量**を選ぶ。
+
+当初はリザバー状態から ``log|r|`` を予測する第 2 の ridge read-out で ``g(x)``
+を推定していた (Papadopoulos らの normalized nonconformity)。実装して測った
+結果、この方針は本データでは機能しなかった。記録として残す。
+
+| 試した内容 | 失敗検知 AUROC |
+| --- | --- |
+| 次元ごとに ``log|r_j|`` を予測 | 0.612 ± 0.099 (平均幅が実スケールの 4000 倍) |
+| 次元を揃えて ``max_j`` を予測 | 0.44 ± 0.20 |
+| 同上を ``mean_j`` に変更 | 0.46 ± 0.20 |
+| 目標をエピソード内で平滑化 | 0.28 ± 0.10 (悪化) |
+| 観測量 (チャンク分散) を使う (現行) | **0.869 ± 0.075** |
+
+学習型が 0.5 を下回る (= 反相関する)のは、read-out の**学習集合内**残差で
+難易度を学習していたため。てこ比の高い点は in-sample 残差がほぼ 0 に潰れる一方、
+out-of-sample では最も誤差が大きい。平滑化すると反相関が強まった (0.37 → 0.28)
+ことからも、雑音ではなく系統的な反転だと分かる。
+
+さらに本データでは、**真の残差を使っても** 失敗検知 AUROC は 0.68 ± 0.11 が
+上限だった。一方チャンク分散は 0.87 ± 0.075。残差の大きさは失敗の在り処では
+ないため、推定器をいくら改良しても届かない。
+
+## 代償
+
+観測量ベースの ``g(x)`` は残差の推定ではないため、被覆率がやや名目を下回る
+(0.864 対 0.900、ECE 0.042)。`absolute` は被覆率が正確 (0.903、ECE 0.002) だが
+区間幅が定数で失敗を区別しない (AUROC は定義上 0.5)。この対比は
+`tests/test_calibration.py` が数値で固定する。
+
+多次元目標の扱い: スコアを次元方向の max でスカラー化し、**全次元が同時に
+区間内に入る確率**として被覆率を定義する (同時被覆)。
 """
 
 from __future__ import annotations
@@ -29,8 +63,6 @@ from typing import Final, Literal, get_args
 import numpy as np
 from numpy.typing import NDArray
 
-from esn_vla_uq.esn.readout import RidgeReadout
-
 ScoreKind = Literal["absolute", "normalized"]
 """非適合度スコアの種類。"""
 
@@ -40,25 +72,14 @@ SUPPORTED_SCORE_KINDS: Final[tuple[str, ...]] = get_args(ScoreKind)
 DEFAULT_SCORE_KIND: Final[ScoreKind] = "normalized"
 """既定のスコア。`absolute` は入力に依存しない定数幅になるため既定にしない。"""
 
-DEFAULT_SCALE_FLOOR: Final[float] = 1e-3
-"""``sigma(x)`` に加える下駄 ``beta``。
+DIFFICULTY_CLIP_QUANTILE: Final[float] = 0.02
+"""中心化した対数難易度を丸め込む分位点 (fit 集合での分布)。
 
-推定スケールが 0 に近づくとスコアが発散し、少数の標本が分位点を支配する。
-下駄を置くことで、スケールが極端に小さい領域でも区間が潰れないようにする。
+観測量が外れ値を取ったときに区間幅が発散しないようにする。
 """
 
-DEFAULT_SCALE_ALPHA: Final[float] = 1e-3
-"""スケール推定用 read-out のリッジ正則化強度。"""
-
-SCALE_CLIP_QUANTILE: Final[float] = 0.01
-"""``log sigma`` の丸め込み範囲を決める分位点。
-
-学習時に観測した ``log|r|`` の 1%〜99% 分位点を上下限にする。両端 1% を落とすのは、
-残差がちょうど 0 に近い標本が下限を極端に小さくし、丸め込みが効かなくなるため。
-"""
-
-_LOG_EPSILON: Final[float] = 1e-12
-"""``log(|r| + eps)`` の eps。残差がちょうど 0 の標本で -inf にしないため。"""
+_DIMENSION_SCALE_FLOOR: Final[float] = 1e-9
+"""``c_j`` の下限。ある次元の残差が恒等的に 0 でもゼロ除算しないため。"""
 
 
 @dataclass(frozen=True)
@@ -67,39 +88,44 @@ class ScoreModel:
 
     Attributes:
         kind: スコアの種類。
-        scale_readout: `normalized` のときの ``sigma(x)`` 推定用 read-out。
+        dimension_scale: 次元ごとの定数スケール ``c_j`` (`[D_y]`)。
+        difficulty_readout: `normalized` のときの ``g(x)`` 推定用 read-out。
             `absolute` のときは `None`。
-        scale_floor: ``sigma(x)`` に加える下駄。
-        log_scale_bounds: 予測した ``log sigma`` を丸め込む範囲 (下限, 上限)。
+        log_difficulty_bounds: 予測した ``log g`` を丸め込む範囲 (下限, 上限)。
             `absolute` のときは `None`。
     """
 
     kind: ScoreKind
-    scale_readout: RidgeReadout | None
-    scale_floor: float
-    log_scale_bounds: tuple[float, float] | None = None
+    dimension_scale: NDArray[np.float64]
+    difficulty_column: int | None
+    log_difficulty_center: float = 0.0
+    log_difficulty_bounds: tuple[float, float] | None = None
+
+    def difficulty(
+        self, states: NDArray[np.float64], inputs: NDArray[np.float64]
+    ) -> NDArray[np.float64]:
+        """入力ごとのスカラー難易度 ``g(x)`` を `[N, 1]` で返す。
+
+        `absolute` では全要素 1.0 (= 入力に依存しない)。`normalized` では入力の
+        `difficulty_column` を対数難易度として読み、fit 集合の中央値が 1 になる
+        よう中心化してから ``exp`` する。中心化により ``q`` が `absolute` の
+        分位点と同程度の大きさに収まる。
+        """
+        if self.difficulty_column is None:
+            return np.ones((states.shape[0], 1), dtype=np.float64)
+        log_difficulty = inputs[:, self.difficulty_column : self.difficulty_column + 1]
+        centered = log_difficulty - self.log_difficulty_center
+        if self.log_difficulty_bounds is not None:
+            lower, upper = self.log_difficulty_bounds
+            centered = np.clip(centered, lower, upper)
+        result: NDArray[np.float64] = np.exp(centered)
+        return result
 
     def scale(
         self, states: NDArray[np.float64], inputs: NDArray[np.float64]
     ) -> NDArray[np.float64]:
-        """各標本・各次元のスケール ``sigma_j(x)`` を `[N, D_y]` で返す。
-
-        `absolute` では全要素 1.0 (= スケーリングしない)。
-
-        `normalized` では予測した ``log sigma`` を学習時に観測した範囲へ
-        丸め込んでから ``exp`` する。丸め込みが無いと、学習データの外側へ
-        わずかに外挿しただけで ``exp`` が発散し、区間幅が行動の実スケール
-        (0.01 程度) の 1000 倍以上になる (実測: 平均幅 44)。区間が広いだけなら
-        被覆率は上がるが、**幅が意味を失い不確実性スコアとして使えなくなる**。
-        """
-        if self.scale_readout is None:
-            return np.ones((states.shape[0], 1), dtype=np.float64)
-        log_scale = self.scale_readout.predict(states, inputs)
-        if self.log_scale_bounds is not None:
-            lower, upper = self.log_scale_bounds
-            log_scale = np.clip(log_scale, lower, upper)
-        estimated: NDArray[np.float64] = np.exp(log_scale)
-        return estimated + self.scale_floor
+        """各標本・各次元のスケール ``c_j * g(x)`` を `[N, D_y]` で返す。"""
+        return self.difficulty(states, inputs) * self.dimension_scale
 
     def score(
         self,
@@ -113,28 +139,43 @@ class ScoreModel:
         return result
 
 
+def dimension_scale(residuals: NDArray[np.float64]) -> NDArray[np.float64]:
+    """次元ごとの定数スケール ``c_j`` を残差の中央値から求める。
+
+    平均ではなく中央値を使う。残差は裾が重く、平均は少数の大きな残差に
+    引きずられる。
+    """
+    scale: NDArray[np.float64] = np.median(np.abs(residuals), axis=0)
+    return np.maximum(scale, _DIMENSION_SCALE_FLOOR)
+
+
 def fit_score_model(
     kind: ScoreKind,
     residuals: NDArray[np.float64],
     states: NDArray[np.float64],
     inputs: NDArray[np.float64],
     *,
-    scale_floor: float = DEFAULT_SCALE_FLOOR,
-    scale_alpha: float = DEFAULT_SCALE_ALPHA,
+    difficulty_column: int | None = None,
+    clip_quantile: float = DIFFICULTY_CLIP_QUANTILE,
 ) -> ScoreModel:
     """スコアモデルを学習する。
 
-    `normalized` のときだけ学習が要る。``log(|r_j| + eps)`` を目標とする ridge
-    read-out を、**fit 集合の残差**に対して学習する。較正集合の残差を使うと
-    較正集合が二重に使われ、conformal の交換可能性が壊れる。
+    次元スケール ``c_j`` は両方のスコアで求める (次元間を揃えるのは `absolute`
+    でも有効なため)。`normalized` はさらに ``difficulty_column`` の観測量を
+    難易度として使い、fit 集合での中央値が 1 になるよう中心化する。
+
+    学習には **fit 集合**のみを使う。較正集合を使うと較正集合が二重に使われ、
+    conformal の交換可能性が壊れる。
 
     Args:
         kind: スコアの種類。
         residuals: fit 集合の残差 `[N, D_y]`。
-        states: fit 集合のリザバー状態 `[N, N_res]`。
+        states: fit 集合のリザバー状態 `[N, N_res]` (現在は未使用。難易度を
+            リザバー状態から学習する実装に戻す場合の拡張点)。
         inputs: fit 集合の入力 `[N, D_u]`。
-        scale_floor: ``sigma(x)`` に加える下駄。
-        scale_alpha: スケール推定 read-out の正則化強度。
+        difficulty_column: 難易度として読む入力の列。`None` なら `normalized`
+            を指定しても定数幅になる。
+        clip_quantile: 中心化した対数難易度を丸め込む分位点。
 
     Returns:
         学習済みの `ScoreModel`。
@@ -147,22 +188,21 @@ def fit_score_model(
             f"kind: 未知のスコアです (actual={kind!r}, "
             f"supported={list(SUPPORTED_SCORE_KINDS)})"
         )
-    if kind == "absolute":
-        return ScoreModel(kind=kind, scale_readout=None, scale_floor=scale_floor)
+    scale = dimension_scale(residuals)
+    if kind == "absolute" or difficulty_column is None:
+        return ScoreModel(kind=kind, dimension_scale=scale, difficulty_column=None)
 
-    log_magnitude = np.log(np.abs(residuals) + _LOG_EPSILON)
-    readout = RidgeReadout(alpha=scale_alpha, input_passthrough=True)
-    readout.fit(states, inputs, log_magnitude)
-    # 学習時に**実際に観測した** log|r| の範囲を丸め込みの上下限にする。
-    # 予測値の範囲ではなく観測値の範囲を使うのは、read-out が学習集合上で
-    # すでに外挿している場合にその外挿まで許してしまわないため。
+    log_difficulty = inputs[:, difficulty_column]
+    center = float(np.median(log_difficulty))
+    centered = log_difficulty - center
     bounds = (
-        float(np.quantile(log_magnitude, SCALE_CLIP_QUANTILE)),
-        float(np.quantile(log_magnitude, 1.0 - SCALE_CLIP_QUANTILE)),
+        float(np.quantile(centered, clip_quantile)),
+        float(np.quantile(centered, 1.0 - clip_quantile)),
     )
     return ScoreModel(
         kind=kind,
-        scale_readout=readout,
-        scale_floor=scale_floor,
-        log_scale_bounds=bounds,
+        dimension_scale=scale,
+        difficulty_column=difficulty_column,
+        log_difficulty_center=center,
+        log_difficulty_bounds=bounds,
     )

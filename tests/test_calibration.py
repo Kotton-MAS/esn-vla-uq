@@ -179,7 +179,29 @@ def test_normalized_detects_failures_while_absolute_cannot(
     )
     assert absolute.detection.mean_auroc == pytest.approx(0.5, abs=1e-12)
     assert absolute.detection.std_auroc == pytest.approx(0.0, abs=1e-12)
-    assert normalized.detection.mean_auroc > 0.55
+    # 観測量ベースの難易度に変えて 0.37 -> 0.87 になった。0.75 は実測 0.869 に
+    # 対する余裕を見た下限で、学習型の推定に戻すと (0.28-0.61) 必ず落ちる。
+    assert normalized.detection.mean_auroc > 0.75
+
+
+def test_normalized_keeps_coverage_close_to_nominal(
+    dataset: RolloutDataset,
+) -> None:
+    """検知能力と引き換えに被覆率を壊していないこと。
+
+    `normalized` の `sigma(x)` は残差の推定ではなく観測量なので、被覆率は
+    `absolute` よりやや名目を下回る (本番規模の実測: 0.864 対 0.903)。
+    許容範囲に収まっていることだけを見張る。**どちらが ECE で優れるかは
+    データ規模に依存する**ため (テスト規模では両者ほぼ同じ)、大小関係は
+    テストで固定しない。
+    """
+    normalized = run_calibration(
+        dataset,
+        ESNConfig(n_reservoir=N_RESERVOIR, seed=0),
+        score_kind="normalized",
+        n_splits=N_SPLITS,
+    )
+    assert normalized.coverage.mean == pytest.approx(0.9, abs=0.08)
 
 
 def test_report_is_json_serializable(report: CalibrationReport) -> None:

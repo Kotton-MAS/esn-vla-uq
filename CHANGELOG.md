@@ -16,8 +16,14 @@ v0.1.0 は未リリースです。それまでの間、公開 API は予告な�
   reliability curve・ECE・失敗検知 AUROC を JSON で出力する
 
 - 非適合度スコア 2 種 (`absolute` / `normalized`)。既定は `normalized`。
-  `absolute` は被覆率としては正しいが区間幅が定数になり、失敗検知 AUROC が
-  定義上 0.5 になる (ステップ単位の不確実性として使えない)
+  `absolute` は被覆率が正確 (ECE 0.002) だが区間幅が定数になり、失敗検知 AUROC が
+  定義上 0.5 になる。`normalized` は失敗検知 AUROC 0.869 と引き換えに被覆率が
+  やや名目を下回る (0.864 対 0.903)
+
+- ESN 入力にチャンク由来の要約量 (`log_chunk_dispersion` /
+  `steps_since_inference`) を追加。要件書が定める入力「action chunk 系列と
+  固有受容感覚」に合わせたもので、平均区間幅が 0.113 から 0.053 へ半減し、
+  被覆率の分割間ばらつきも 0.069 から 0.027 に縮んだ
 
 - 較正データ分割 (`within_task` 既定 / `across_task`)。`across_task` は交換可能性が
   崩れるため、被覆率保証が弱いことをレポートとログに明記する

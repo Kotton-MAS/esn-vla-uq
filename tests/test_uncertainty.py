@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from esn_vla_uq.data.features import CHUNK_FEATURE_NAMES
 from esn_vla_uq.data.schema import ACTION_DIM, STATE_DIM, RolloutDataset
 from esn_vla_uq.data.synthetic import generate_dataset
 from esn_vla_uq.esn import ESNConfig
@@ -42,10 +43,23 @@ def test_samples_drop_one_step_per_episode(dataset: RolloutDataset) -> None:
         assert sample.n_samples == episode.n_steps - 1
 
 
-def test_input_is_state_and_action(dataset: RolloutDataset) -> None:
+def test_input_includes_state_action_and_chunk_features(
+    dataset: RolloutDataset,
+) -> None:
+    """既定入力は固有受容感覚 + 行動 + チャンク由来の要約量 (要件書の入力定義)。"""
     samples = build_samples(dataset)
-    assert samples[0].n_inputs == STATE_DIM + ACTION_DIM
+    assert samples[0].n_inputs == STATE_DIM + ACTION_DIM + len(CHUNK_FEATURE_NAMES)
     assert samples[0].n_targets == ACTION_DIM
+    assert samples[0].difficulty_column is not None
+
+
+def test_state_action_feature_has_no_difficulty_column(
+    dataset: RolloutDataset,
+) -> None:
+    """チャンクを入れない構成では区間幅を変調する観測量が無い。"""
+    samples = build_samples(dataset, feature="state_action")
+    assert samples[0].n_inputs == STATE_DIM + ACTION_DIM
+    assert samples[0].difficulty_column is None
 
 
 def test_target_is_the_next_action_within_the_same_episode(
@@ -58,9 +72,8 @@ def test_target_is_the_next_action_within_the_same_episode(
             sample.targets, episode.action[1:].astype(np.float64)
         )
         # 入力側の action 部分は 1 つ前のステップ。
-        np.testing.assert_allclose(
-            sample.inputs[:, STATE_DIM:], episode.action[:-1].astype(np.float64)
-        )
+        action_block = sample.inputs[:, STATE_DIM : STATE_DIM + ACTION_DIM]
+        np.testing.assert_allclose(action_block, episode.action[:-1].astype(np.float64))
 
 
 def test_failure_labels_start_at_failure_onset(dataset: RolloutDataset) -> None:

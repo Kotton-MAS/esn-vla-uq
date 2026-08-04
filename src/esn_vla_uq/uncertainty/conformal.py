@@ -163,7 +163,13 @@ class SplitConformalPredictor:
         readout.fit(states, inputs, targets)
         residuals = targets - readout.predict(states, inputs)
         self._readout = readout
-        self._score_model = fit_score_model(self.score_kind, residuals, states, inputs)
+        self._score_model = fit_score_model(
+            self.score_kind,
+            residuals,
+            states,
+            inputs,
+            difficulty_column=samples[0].difficulty_column,
+        )
         logger.debug(
             "conformal fit: n_samples=%d score_kind=%s",
             states.shape[0],
@@ -205,8 +211,6 @@ class SplitConformalPredictor:
         states, inputs, _targets = self._design(samples)
         predicted = self._require_readout().predict(states, inputs)
         half_width = quantile * self._require_score_model().scale(states, inputs)
-        # `absolute` では scale が `[N, 1]` なので、目標次元へブロードキャストする。
-        half_width = np.broadcast_to(half_width, predicted.shape).copy()
         uncertainty: NDArray[np.float64] = np.max(half_width, axis=1)
         return PredictionIntervals(
             predicted=predicted,

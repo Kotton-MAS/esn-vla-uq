@@ -22,8 +22,16 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 
-from esn_vla_uq.data.features import dataset_inputs
+from esn_vla_uq.data.features import FeatureSet, dataset_inputs
 from esn_vla_uq.data.schema import Episode, RolloutDataset
+
+DEFAULT_PREDICTION_FEATURE: FeatureSet = "state_action_chunk"
+"""予測タスクの既定入力。
+
+要件書が定める入力は「action chunk 系列と固有受容感覚」。 だけでは
+合成データが失敗区間に注入するチャンク分散の増大が入力に現れず、不確実性が
+失敗を検知できない (実測 AUROC 0.50)。
+"""
 
 MIN_EPISODE_STEPS: int = 2
 """1 標本を作るのに必要な最小ステップ数 (入力 1 つと目標 1 つ)。"""
@@ -52,6 +60,7 @@ class EpisodeSamples:
     inputs: NDArray[np.float64]
     targets: NDArray[np.float64]
     target_steps: NDArray[np.int64]
+    difficulty_column: int | None = None
 
     @property
     def n_samples(self) -> int:
@@ -80,7 +89,9 @@ class EpisodeSamples:
         return flags
 
 
-def build_samples(dataset: RolloutDataset) -> list[EpisodeSamples]:
+def build_samples(
+    dataset: RolloutDataset, *, feature: FeatureSet = DEFAULT_PREDICTION_FEATURE
+) -> list[EpisodeSamples]:
     """データセットを 1 ステップ先 action 予測の標本列へ変換する。
 
     Args:
@@ -94,9 +105,9 @@ def build_samples(dataset: RolloutDataset) -> list[EpisodeSamples]:
     Raises:
         ValueError: 標本を 1 つも作れない場合。
     """
-    inputs = dataset_inputs(dataset, feature="state_action")
+    inputs = dataset_inputs(dataset, feature=feature)
     samples = [
-        _episode_samples(episode_inputs, episode)
+        _episode_samples(episode_inputs, episode, inputs.difficulty_column)
         for episode_inputs, episode in zip(
             inputs.segments, dataset.episodes, strict=True
         )
@@ -111,7 +122,9 @@ def build_samples(dataset: RolloutDataset) -> list[EpisodeSamples]:
 
 
 def _episode_samples(
-    episode_inputs: NDArray[np.float64], episode: Episode
+    episode_inputs: NDArray[np.float64],
+    episode: Episode,
+    difficulty_column: int | None,
 ) -> EpisodeSamples:
     """1 エピソード分の入力・目標・ステップ番号を切り出す。"""
     # 目標は次ステップの action。最終ステップには目標が無いので入力側を 1 つ削る。
@@ -123,6 +136,7 @@ def _episode_samples(
         inputs=episode_inputs[:-1],
         targets=episode.action[1:].astype(np.float64),
         target_steps=np.arange(1, episode.n_steps, dtype=np.int64),
+        difficulty_column=difficulty_column,
     )
 
 
