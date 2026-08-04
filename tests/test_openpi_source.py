@@ -35,20 +35,21 @@ OPENPI_REPLAN_STEPS = 5
 N_STEPS = 40
 
 
-OBJECT_KEYS = ("milk_1_pos", "milk_1_quat", "milk_1_to_robot0_eef_pos")
-"""テスト用の物体キー構成 (pos 3 + quat 4 + 相対 pos 3 = 10 次元)。"""
+OBJECT_NAMES = ("milk_1", "basket_1")
+"""テスト用の物体名。"""
 
 
-def _object_state(heights: list[float], n_steps: int) -> NDArray[np.float32]:
-    """指定した高さ軌跡を `object-state` の連結形式に埋め込む。
+def _object_pos(heights: list[float], n_steps: int) -> NDArray[np.float32]:
+    """指定した高さ軌跡を `float32[T, n_objects, 3]` に埋め込む。
 
-    高さ列は `n_steps` に線形補間せず、先頭から並べて残りは最終値で埋める。
-    分類が見るのは初期値・最大値・最終値なので、この単純化で足りる。
+    高さ列は `n_steps` に補間せず、先頭から並べて残りは最終値で埋める。分類が
+    見るのは初期値・最大値・最終値なので、この単純化で足りる。1 番目の物体だけを
+    動かし、2 番目は据え置く (触っていない物体に引きずられないことの確認)。
     """
-    state = np.zeros((n_steps, 10), dtype=np.float32)
+    positions = np.zeros((n_steps, len(OBJECT_NAMES), 3), dtype=np.float32)
     padded = heights + [heights[-1]] * (n_steps - len(heights))
-    state[:, 2] = np.asarray(padded[:n_steps], dtype=np.float32)
-    return state
+    positions[:, 0, 2] = np.asarray(padded[:n_steps], dtype=np.float32)
+    return positions
 
 
 def _write_log(
@@ -78,10 +79,10 @@ def _write_log(
                 size=(inference_steps.size, chunk_horizon, ACTION_DIM)
             ).astype(np.float32),
             inference_steps=inference_steps,
-            object_state=(
-                np.zeros((0, 0), dtype=np.float32)
+            object_pos=(
+                np.zeros((0, 0, 3), dtype=np.float32)
                 if object_heights_per_episode is None
-                else _object_state(object_heights_per_episode[index], n_steps)
+                else _object_pos(object_heights_per_episode[index], n_steps)
             ),
         )
         entries.append(
@@ -90,6 +91,7 @@ def _write_log(
                 "task_name": "pick up the black bowl",
                 "success": index % 2 == 0,
                 "n_steps": n_steps,
+                "object_names": list(OBJECT_NAMES),
             }
         )
 
@@ -105,11 +107,6 @@ def _write_log(
                 "action_dim": ACTION_DIM,
                 "chunk_horizon": chunk_horizon,
                 "replan_steps": OPENPI_REPLAN_STEPS,
-                **(
-                    {}
-                    if object_heights_per_episode is None
-                    else {"object_keys": list(OBJECT_KEYS)}
-                ),
                 "episodes": entries,
             },
             ensure_ascii=False,
@@ -390,8 +387,8 @@ def test_optional_server_metadata_is_accepted(log_dir: Path) -> None:
     assert dataset.policy == "pi05_libero"
 
 
-def test_failure_modes_are_unknown_without_object_state(log_dir: Path) -> None:
-    """`object_state` を持たない古いログでは内訳が出ない。
+def test_failure_modes_are_unknown_without_object_positions(log_dir: Path) -> None:
+    """`object_pos` を持たない古いログでは内訳が出ない。
 
     ここが ``"never_lifted"`` などに落ちると、記録が無いだけなのに「掴めて
     いない」と読めてしまう。判定できないことは判定できないと出す。
@@ -400,7 +397,7 @@ def test_failure_modes_are_unknown_without_object_state(log_dir: Path) -> None:
     assert counts == {"success": 2, "unknown": 1}
 
 
-def test_failure_modes_are_derived_from_object_state(tmp_path: Path) -> None:
+def test_failure_modes_are_derived_from_object_positions(tmp_path: Path) -> None:
     """記録があればタイムアウトの内訳が分かれること。
 
     LIBERO は成功以外に終了条件を持たないため、失敗は定義上すべてタイムアウトに
@@ -420,7 +417,7 @@ def test_failure_modes_are_derived_from_object_state(tmp_path: Path) -> None:
     assert failure_mode_breakdown(directory) == {"success": 2, "dropped": 1}
 
 
-def test_object_state_does_not_reach_the_episode(tmp_path: Path) -> None:
+def test_object_positions_do_not_reach_the_episode(tmp_path: Path) -> None:
     """物体の状態は `Episode` に載らないこと。
 
     ESN の入力は要件書どおり action chunk と固有受容感覚に限る。物体の状態は
@@ -434,7 +431,7 @@ def test_object_state_does_not_reach_the_episode(tmp_path: Path) -> None:
     )
     episode = OpenpiLogSource(directory).load().episodes[0]
     assert episode.state.shape == (N_STEPS, STATE_DIM)
-    assert not hasattr(episode, "object_state")
+    assert not hasattr(episode, "object_pos")
 
 
 def test_failure_mode_breakdown_reports_a_missing_episode(log_dir: Path) -> None:

@@ -115,48 +115,44 @@ def test_drop_onset_only_applies_to_drops(mode: FailureMode) -> None:
     assert drop_onset(_trace([1.0, 1.2, 1.0]), mode) is None
 
 
-def test_object_heights_extracts_z_from_the_concatenated_vector() -> None:
-    """`object-state` の連結から z だけを切り出す。
-
-    連結の順序はキー名の並びで決まる。`pos` は 3、`quat` は 4 を占める。
-    """
-    # milk_1_pos(3) + milk_1_quat(4) + milk_1_to_robot0_eef_pos(3)
-    frame = [0.0, 0.0, 1.5, 0.0, 0.0, 0.0, 1.0, 0.1, 0.1, 0.1]
-    state = np.asarray([frame], dtype=np.float32)
-    keys = ("milk_1_pos", "milk_1_quat", "milk_1_to_robot0_eef_pos")
-    trace = object_heights(state, keys)
+def test_object_heights_takes_z_from_the_position_array() -> None:
+    """`[T, n_objects, 3]` の 3 番目の成分が高さ。"""
+    positions = np.asarray([[[0.0, 0.0, 1.5], [0.1, 0.1, 0.9]]], dtype=np.float32)
+    trace = object_heights(positions)
     assert trace is not None
-    assert trace.n_objects == 1
+    assert trace.n_objects == 2
     assert trace.heights[0, 0] == pytest.approx(1.5)
+    assert trace.heights[0, 1] == pytest.approx(0.9)
 
 
-def test_relative_positions_are_not_treated_as_object_heights() -> None:
-    """eef との相対位置は物体の高さではない。
+def test_object_counts_may_differ_between_episodes() -> None:
+    """タスクごとに物体数が違っても読める。
 
-    `_to_robot0_eef_pos` を混ぜると、グリッパが動くだけで「持ち上がった」と
-    誤判定する。
+    libero_10 では 1 コレクション内でタスクごとに物体数が変わる (実測で 4〜16)。
+    データセット全体で次元を固定すると読めなくなる。
     """
-    keys = ("milk_1_pos", "milk_1_quat", "milk_1_to_robot0_eef_pos")
-    state = np.zeros((2, 10), dtype=np.float32)
-    trace = object_heights(state, keys)
-    assert trace is not None
-    assert trace.n_objects == 1
+    for n_objects in (4, 16):
+        positions = np.zeros((3, n_objects, 3), dtype=np.float32)
+        trace = object_heights(positions)
+        assert trace is not None
+        assert trace.n_objects == n_objects
 
 
 @pytest.mark.parametrize(
-    ("state", "keys"),
+    "positions",
     [
-        (np.zeros((0, 0), dtype=np.float32), ("milk_1_pos",)),
-        (np.zeros((2, 3), dtype=np.float32), ()),
-        (np.zeros((2, 2), dtype=np.float32), ("milk_1_pos",)),
+        np.zeros((0, 2, 3), dtype=np.float32),
+        np.zeros((3, 0, 3), dtype=np.float32),
+        np.zeros((3, 2), dtype=np.float32),
+        np.zeros((3, 2, 7), dtype=np.float32),
     ],
 )
-def test_object_heights_returns_none_when_it_cannot_slice(
-    state: NDArray[np.float32], keys: tuple[str, ...]
+def test_object_heights_returns_none_for_unusable_input(
+    positions: NDArray[np.float32],
 ) -> None:
-    """切り出せない入力では `None` を返す (例外にしない)。
+    """使えない形では `None` を返す (例外にしない)。
 
-    古いログや想定外のキー構成でも、分類が ``"unknown"`` に落ちるだけで
-    集計自体は続けられるようにする。
+    古いログや想定外の記録でも、分類が ``"unknown"`` に落ちるだけで集計自体は
+    続けられるようにする。
     """
-    assert object_heights(state, keys) is None
+    assert object_heights(positions) is None

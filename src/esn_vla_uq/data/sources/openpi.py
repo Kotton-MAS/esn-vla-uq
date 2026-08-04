@@ -50,10 +50,13 @@ openpi の評価スクリプトは**ロールアウトを保存しない** (repl
   (推論したチャンクだけを詰める。非推論ステップの NaN は保存しない)
 - `inference_steps`: `int64[n_inference]` (チャンクを推論したステップ番号)
 
-任意の配列 `object_state` (`float32[T, D]`) には、シミュレータが返す物体の状態が
-入る。**`Episode` には渡さない**。ESN の入力は要件書どおり action chunk と固有
-受容感覚に限り、物体の状態は失敗様式の事後分類 (`failure_mode_breakdown`) に
-だけ使う。古いログには無いため、欠けていても読める。
+任意の配列 `object_pos` (`float32[T, n_objects, 3]`) には、シミュレータが返す物体の
+位置が入る (物体名はマニフェストのエピソード項目 `object_names`)。物体はタスクごとに
+違うため、次元をデータセット全体で固定しない。
+
+**`Episode` には渡さない。** ESN の入力は要件書どおり action chunk と固有受容感覚に
+限り、物体の位置は失敗様式の事後分類 (`failure_mode_breakdown`) にだけ使う。古い
+ログには無いため、欠けていても読める。
 
 `failure_onset` は持たない。openpi の評価ループは `done` が立てば成功、
 `max_steps` 到達なら失敗とするだけで、**失敗が始まった時刻という概念が無い**。
@@ -170,7 +173,7 @@ def failure_mode_breakdown(log_dir: Path) -> dict[FailureMode, int]:
         log_dir: `manifest.json` を含むログディレクトリ。
 
     Returns:
-        `FailureMode` ごとの件数。`object_state` を持たない古いログでは、
+        `FailureMode` ごとの件数。`object_pos` を持たない古いログでは、
         失敗はすべて ``"unknown"`` に入る。
 
     Raises:
@@ -178,7 +181,6 @@ def failure_mode_breakdown(log_dir: Path) -> dict[FailureMode, int]:
         ValueError: 形式バージョンが違う場合。
     """
     manifest = _read_manifest(log_dir / MANIFEST_NAME)
-    object_keys = _optional_str_tuple(manifest, "object_keys")
     counts: dict[FailureMode, int] = {}
     for entry in _require_episodes(manifest):
         episode_id = _require_str(entry, "episode_id")
@@ -187,23 +189,13 @@ def failure_mode_breakdown(log_dir: Path) -> dict[FailureMode, int]:
         if not path.exists():
             raise FileNotFoundError(f"エピソードがありません: {path.name}")
         with np.load(path, allow_pickle=False) as archive:
-            raw = archive.get("object_state")
+            raw = archive.get("object_pos")
         trace = (
-            None
-            if raw is None
-            else object_heights(np.asarray(raw, dtype=np.float32), object_keys)
+            None if raw is None else object_heights(np.asarray(raw, dtype=np.float32))
         )
         mode = classify_failure(trace, success=success)
         counts[mode] = counts.get(mode, 0) + 1
     return counts
-
-
-def _optional_str_tuple(manifest: dict[str, object], key: str) -> tuple[str, ...]:
-    """任意の文字列配列フィールドを取り出す (欠けていれば空)。"""
-    value = manifest.get(key)
-    if not isinstance(value, list):
-        return ()
-    return tuple(item for item in value if isinstance(item, str))
 
 
 def _read_manifest(path: Path) -> dict[str, object]:

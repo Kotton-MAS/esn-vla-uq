@@ -77,34 +77,23 @@ class ObjectTrace:
         return int(self.heights.shape[1])
 
 
-def object_heights(
-    object_state: NDArray[np.float32], object_keys: tuple[str, ...]
-) -> ObjectTrace | None:
-    """`object-state` から各物体の z 座標を切り出す。
+def object_heights(object_pos: NDArray[np.float32]) -> ObjectTrace | None:
+    """記録した物体位置から z 座標だけを取り出す。
 
-    `object-state` は各物体の `pos`(3) と `quat`(4)、および eef との相対
-    `pos`(3) / `quat`(4) を連結したものである。キー名の並びから z の位置を求める。
+    収集側は `<object>_pos` を個別に取り出して積んである。観測にある
+    `object-state` (全物体の量を連結した 1 本のベクトル) は**使わない**。連結順を
+    推測して切り出すと、タスクごとに物体数が違う (libero_10 では 28〜112 次元)
+    ため位置がずれる。
 
     Args:
-        object_state: `float32[T, D]` の連結ベクトル。
-        object_keys: 連結の順序を表すキー名 (`<object>_pos` / `<object>_quat`)。
+        object_pos: `float32[T, n_objects, 3]`。各物体の (x, y, z)。
 
     Returns:
-        高さの軌跡。切り出せない場合は `None`。
+        高さの軌跡。形が合わない、または空なら `None`。
     """
-    if object_state.size == 0 or not object_keys:
+    if object_pos.ndim != 3 or object_pos.shape[2] != 3 or object_pos.size == 0:
         return None
-    offsets: list[int] = []
-    cursor = 0
-    for key in object_keys:
-        width = 3 if key.endswith("_pos") else 4
-        if key.endswith("_pos") and "_to_robot0" not in key:
-            # pos は (x, y, z) なので z は 3 番目。
-            offsets.append(cursor + 2)
-        cursor += width
-    if not offsets or cursor > object_state.shape[1]:
-        return None
-    return ObjectTrace(heights=object_state[:, offsets].astype(np.float64))
+    return ObjectTrace(heights=object_pos[:, :, 2].astype(np.float64))
 
 
 def classify_failure(trace: ObjectTrace | None, *, success: bool) -> FailureMode:
