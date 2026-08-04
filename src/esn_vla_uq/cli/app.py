@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Final
 
 from esn_vla_uq import __version__
+from esn_vla_uq.calibration.commands import add_calibrate_arguments, run_calibrate
 from esn_vla_uq.data.commands import add_gen_sample_data_arguments, run_gen_sample_data
 from esn_vla_uq.diagnostics.commands import add_diagnose_arguments, run_diagnose
 
@@ -96,6 +97,13 @@ def build_parser() -> argparse.ArgumentParser:
             help="合成ロールアウトのサンプルデータを生成する",
         )
     )
+    add_calibrate_arguments(
+        subparsers.add_parser(
+            "calibrate",
+            parents=[common],
+            help="conformal 予測区間の較正評価 (被覆率 / ECE / 失敗検知) を実行する",
+        )
+    )
     return parser
 
 
@@ -122,12 +130,19 @@ def _run_gen_sample_data(args: argparse.Namespace) -> int:
     return run_gen_sample_data(args)
 
 
+def _run_calibrate(args: argparse.Namespace) -> int:
+    """`calibrate` サブコマンドを実行する (実体は `calibration.commands`)。"""
+    return run_calibrate(args)
+
+
 def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     """サブコマンドへ振り分ける。"""
     if args.command == "diagnose":
         return _run_diagnose(args)
     if args.command == "gen-sample-data":
         return _run_gen_sample_data(args)
+    if args.command == "calibrate":
+        return _run_calibrate(args)
     parser.error(f"unknown command: {args.command}")
 
 

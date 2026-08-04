@@ -11,15 +11,34 @@ v0.1.0 は未リリースです。それまでの間、公開 API は予告な�
 
 ### Added
 
+- **conformal 予測区間と較正評価** (`esn-vla-uq calibrate`): ESN の 1 ステップ先
+  action 予測に split conformal を掛け、ステップ単位の予測区間・被覆率・
+  reliability curve・ECE・失敗検知 AUROC を JSON で出力する
+
+- 非適合度スコア 2 種 (`absolute` / `normalized`)。既定は `normalized`。
+  `absolute` は被覆率としては正しいが区間幅が定数になり、失敗検知 AUROC が
+  定義上 0.5 になる (ステップ単位の不確実性として使えない)
+
+- 較正データ分割 (`within_task` 既定 / `across_task`)。`across_task` は交換可能性が
+  崩れるため、被覆率保証が弱いことをレポートとログに明記する
+
+- reliability diagram の PNG 出力 (`--diagram`)。matplotlib は任意依存
+  (`esn-vla-uq[viz]`) で、数値は matplotlib 無しでも常に出力される
+
 - ESN コア: リザバー生成 (`Reservoir`)、リッジ read-out (`RidgeReadout`)、
   両者を束ねる `ESN`、ハイパーパラメータ定義 (`ESNConfig`)
+
 - リザバー診断: スペクトル半径、Echo State Property (3 指標を必ず併記)、
   線形メモリ容量、および診断レポートの JSON 出力
+
 - 決定論的な合成ロールアウト生成と同梱サンプルデータ
   (`source: "synthetic"`。実 LIBERO のロールアウトではありません)
+
 - CLI `esn-vla-uq`: `diagnose` / `gen-sample-data`
+
 - `data/features.py`: `RolloutDataset` から ESN 入力への変換。エピソード境界で
   リザバー状態をリセットする方針を確定 (`esn.reservoir.run_episodes`)
+
 - `gen-sample-data --force`: 既存の出力を明示的に上書きする
 
 ### Changed
