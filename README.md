@@ -18,10 +18,45 @@ not a claim of this release** — see [Scope](#scope).
 
 ```bash
 uv sync
-uv run esn-vla-uq calibrate     # coverage / ECE / failure-detection AUROC
-uv run esn-vla-uq calibrate --input <openpi-log-dir>   # collected openpi rollouts
+uv run esn-vla-uq calibrate     # coverage / ECE on the bundled synthetic data
 uv run esn-vla-uq diagnose      # spectral radius / ESP / memory capacity
 ```
+
+Four subcommands are available:
+
+| command           | what it does                                                  |
+| ----------------- | ------------------------------------------------------------- |
+| `calibrate`       | conformal intervals, coverage, reliability curve, ECE         |
+| `diagnose`        | reservoir diagnostics (spectral radius, ESP, memory capacity) |
+| `gen-sample-data` | regenerate the bundled synthetic rollouts                     |
+| `demo`            | the animation above (needs `[viz]`)                           |
+
+`calibrate` and `demo` read a dataset via `--input`: omit it for the bundled synthetic
+data, pass a `.npz` for a saved dataset, or pass a **directory** for collected openpi
+rollouts. `diagnose` builds a reservoir from `ESNConfig` and needs no dataset;
+`gen-sample-data` writes one.
+
+## Working with real openpi rollouts
+
+openpi's own eval script does not persist rollouts — it only writes replay videos — so
+collection is a separate step. `scripts/collect_openpi_rollouts.py` mirrors openpi's
+LIBERO eval loop and records state, action and action chunks.
+
+```bash
+# 1. openpi side: serve a policy (its own environment)
+cd path/to/openpi && uv run scripts/serve_policy.py --env LIBERO
+
+# 2. LIBERO client side (openpi's examples/libero/.venv, Python 3.8)
+python path/to/esn-vla-uq/scripts/collect_openpi_rollouts.py \
+    --output-dir outputs/openpi_logs --task-suite-name libero_10
+
+# 3. back here (Python 3.12)
+uv run esn-vla-uq calibrate --input outputs/openpi_logs --split within_task
+```
+
+The script is the **only** part of this repository that needs openpi or LIBERO
+installed; it is not shipped in the wheel or the sdist. The package itself reads the
+collected logs and depends on numpy alone.
 
 ## Demo
 
@@ -144,13 +179,9 @@ the sufficient condition, which is normal and why all three are printed.
 
 ## Not implemented yet
 
-- **openpi rollouts have not actually been collected.** `OpenpiLogSource` and the
-  collection script exist and were written against openpi's real implementation, but
-  no run against a live policy server has been done — that needs a GPU and a LIBERO
-  setup. Tests use fixtures shaped like real openpi output (`chunk_horizon=50`,
-  replan every 5 steps).
 - Real LIBERO footage in the demo (the video panel is a synthetic stand-in).
 - VLM feature injection (deferred to v0.2 by the requirements).
+- Failure detection — see [Scope](#scope) for why it is out of this release.
 
 ## Development
 
@@ -167,15 +198,19 @@ make fmt     # ruff format (modifies files)
 
 ```
 src/esn_vla_uq/
-├── linalg.py       # shared spectral quantities (lowest layer)
-├── provenance.py   # DataSource (lowest layer)
-├── esn/            # reservoir, ridge read-out, model
-├── diagnostics/    # spectral radius / ESP / memory capacity
-├── data/           # schema, invariants, sources/, synthetic generation, IO, features
-├── uncertainty/    # prediction task, splits, nonconformity, split conformal
-├── calibration/    # coverage / ECE / reliability diagram
-├── demo/           # demo animation (frame data and rendering are separated)
-└── cli/            # argparse entry point
+├── linalg.py        # shared spectral quantities (lowest layer)
+├── provenance.py    # DataSource (lowest layer)
+├── logging_paths.py # log-safe path rendering (lowest layer)
+├── esn/             # reservoir, ridge read-out, model
+├── diagnostics/     # spectral radius / ESP / memory capacity
+├── data/            # schema, invariants, sources/ (synthetic + openpi), IO, features
+├── uncertainty/     # prediction task, splits, nonconformity, split conformal
+├── calibration/     # coverage / ECE / reliability diagram
+├── demo/            # demo animation (frame data and rendering are separated)
+└── cli/             # argparse entry point, typed option parsing, --input resolution
+
+scripts/
+└── collect_openpi_rollouts.py   # the only file that needs openpi + LIBERO
 ```
 
 ## Documentation
