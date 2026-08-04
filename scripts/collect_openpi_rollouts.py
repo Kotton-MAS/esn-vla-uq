@@ -50,9 +50,31 @@ openpi / LIBERO が入っていない環境では起動時に明示的なエラ�
   `replan_steps` だけだが、**捨てずに全部残す**。チャンク内のばらつきが
   不確実性の材料であり、実行分だけでは分散が測れない)
 - `inference_steps`: チャンクを推論したステップ番号
+- `object_state`: シミュレータが返す物体の状態 (`object-state`)。**失敗様式の
+  事後分類にのみ使い、ESN の入力には渡さない**
 
 観測画像は記録しない。要件書の入力は「action chunk 系列と固有受容感覚」であり、
 画像は v0.2 以降の VLM 特徴量注入の話になる。画像を貯めるとログが桁違いに重くなる。
+
+## なぜ物体の状態を記録するのか
+
+LIBERO の `step` は `done = self._check_success()` であり、**成功以外に終了条件が
+無い**。したがって失敗は定義上すべてタイムアウトになり、試行を増やしても難しい
+スイートに変えても失敗様式は増えない (実測: `pi05_libero` の 6 本も `pi0_libero` の
+23 本もすべてタイムアウト。`docs/design.md` 10.13 節)。
+
+一方、観測には物体の位置・姿勢と、グリッパから物体までの相対位置が含まれる。これを
+記録しておけば、同じ「タイムアウト」でも
+
+- 一度も物体に近づけなかった
+- 掴んだが落とした
+- 掴んで運んだが目標位置に置けなかった
+
+を事後に区別できる。**終了条件を増やさずに失敗様式を得るための記録**である。
+物体の高さが下がった時刻から `failure_onset` を定義できる可能性もある。
+
+**解釈は加えずに生の値を残す。** ここで分類まで済ませてしまうと、分類の基準を
+変えたくなったときに再収集が要る。分類は読み込み側で行う。
 """
 
 from __future__ import annotations
@@ -110,6 +132,7 @@ class EpisodeRecord:
     actions: list[NDArray[np.float64]] = dataclasses.field(default_factory=list)
     chunks: list[NDArray[np.float64]] = dataclasses.field(default_factory=list)
     inference_steps: list[int] = dataclasses.field(default_factory=list)
+    object_states: list[NDArray[np.float64]] = dataclasses.field(default_factory=list)
     success: bool = False
 
     def n_steps(self) -> int:
@@ -125,6 +148,7 @@ class EpisodeRecord:
             action=np.asarray(self.actions, dtype=np.float32),
             action_chunk=np.asarray(self.chunks, dtype=np.float32),
             inference_steps=np.asarray(self.inference_steps, dtype=np.int64),
+            object_state=np.asarray(self.object_states, dtype=np.float32),
         )
 
 
@@ -161,6 +185,8 @@ def write_manifest(
     chunk_horizon: int,
     policy: str,
     server_metadata: dict[str, object],
+    object_state_dim: int,
+    object_keys: list[str],
 ) -> Path:
     """マニフェストを書き出す。
 
@@ -179,6 +205,8 @@ def write_manifest(
         "control_hz": CONTROL_HZ,
         "state_dim": state_dim,
         "action_dim": action_dim,
+        "object_state_dim": object_state_dim,
+        "object_keys": object_keys,
         "chunk_horizon": chunk_horizon,
         "replan_steps": int(args.replan_steps),
         "episodes": [
@@ -231,6 +259,9 @@ def main(argv: list[str] | None = None) -> int:
 
     records: list[EpisodeRecord] = []
     chunk_horizon = 0
+    # 物体の状態は `object-state` に連結されて返る。個々のキー名も残しておくと、
+    # 後から「どの物体か」を辿れる。
+    object_keys: list[str] = []
     for task_id in range(task_suite.n_tasks):
         task = task_suite.get_task(task_id)
         initial_states = task_suite.get_task_init_states(task_id)
@@ -245,6 +276,12 @@ def main(argv: list[str] | None = None) -> int:
         for episode_index in range(args.num_trials_per_task):
             env.reset()
             obs = env.set_init_state(initial_states[episode_index])
+            if not object_keys:
+                object_keys = sorted(
+                    k
+                    for k in obs
+                    if k.endswith(("_pos", "_quat")) and "robot0" not in k
+                )
             record = EpisodeRecord(
                 episode_id=f"openpi_{task_id:03d}_{episode_index:03d}",
                 task_name=str(task.language),
@@ -299,6 +336,9 @@ def main(argv: list[str] | None = None) -> int:
                 action = action_plan.popleft()
                 record.states.append(state)
                 record.actions.append(np.asarray(action, dtype=np.float64))
+                record.object_states.append(
+                    np.asarray(obs["object-state"], dtype=np.float64)
+                )
                 obs, _reward, done, _info = env.step(np.asarray(action).tolist())
                 if done:
                     record.success = True
@@ -330,6 +370,10 @@ def main(argv: list[str] | None = None) -> int:
         chunk_horizon=chunk_horizon,
         policy=policy,
         server_metadata=server_metadata,
+        object_state_dim=(
+            int(records[0].object_states[0].shape[0]) if records[0].object_states else 0
+        ),
+        object_keys=object_keys,
     )
     n_success = sum(1 for record in records if record.success)
     logger.info(

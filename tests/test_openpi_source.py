@@ -13,13 +13,16 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
+from esn_vla_uq.data.failure_modes import GRASP_HEIGHT_MARGIN
 from esn_vla_uq.data.schema import ACTION_DIM, STATE_DIM
 from esn_vla_uq.data.sources.openpi import (
     EPISODES_DIRNAME,
     LOG_SCHEMA_VERSION,
     MANIFEST_NAME,
     OpenpiLogSource,
+    failure_mode_breakdown,
 )
 from esn_vla_uq.uncertainty import build_samples
 
@@ -32,6 +35,22 @@ OPENPI_REPLAN_STEPS = 5
 N_STEPS = 40
 
 
+OBJECT_KEYS = ("milk_1_pos", "milk_1_quat", "milk_1_to_robot0_eef_pos")
+"""テスト用の物体キー構成 (pos 3 + quat 4 + 相対 pos 3 = 10 次元)。"""
+
+
+def _object_state(heights: list[float], n_steps: int) -> NDArray[np.float32]:
+    """指定した高さ軌跡を `object-state` の連結形式に埋め込む。
+
+    高さ列は `n_steps` に線形補間せず、先頭から並べて残りは最終値で埋める。
+    分類が見るのは初期値・最大値・最終値なので、この単純化で足りる。
+    """
+    state = np.zeros((n_steps, 10), dtype=np.float32)
+    padded = heights + [heights[-1]] * (n_steps - len(heights))
+    state[:, 2] = np.asarray(padded[:n_steps], dtype=np.float32)
+    return state
+
+
 def _write_log(
     log_dir: Path,
     *,
@@ -39,6 +58,7 @@ def _write_log(
     n_steps: int = N_STEPS,
     chunk_horizon: int = OPENPI_CHUNK_HORIZON,
     schema_version: str = LOG_SCHEMA_VERSION,
+    object_heights_per_episode: list[list[float]] | None = None,
 ) -> Path:
     """openpi 形状の収集ログを書き出す。"""
     rng = np.random.default_rng(0)
@@ -58,6 +78,11 @@ def _write_log(
                 size=(inference_steps.size, chunk_horizon, ACTION_DIM)
             ).astype(np.float32),
             inference_steps=inference_steps,
+            object_state=(
+                np.zeros((0, 0), dtype=np.float32)
+                if object_heights_per_episode is None
+                else _object_state(object_heights_per_episode[index], n_steps)
+            ),
         )
         entries.append(
             {
@@ -80,6 +105,11 @@ def _write_log(
                 "action_dim": ACTION_DIM,
                 "chunk_horizon": chunk_horizon,
                 "replan_steps": OPENPI_REPLAN_STEPS,
+                **(
+                    {}
+                    if object_heights_per_episode is None
+                    else {"object_keys": list(OBJECT_KEYS)}
+                ),
                 "episodes": entries,
             },
             ensure_ascii=False,
@@ -358,3 +388,57 @@ def test_optional_server_metadata_is_accepted(log_dir: Path) -> None:
 
     dataset = OpenpiLogSource(log_dir).load()
     assert dataset.policy == "pi05_libero"
+
+
+def test_failure_modes_are_unknown_without_object_state(log_dir: Path) -> None:
+    """`object_state` を持たない古いログでは内訳が出ない。
+
+    ここが ``"never_lifted"`` などに落ちると、記録が無いだけなのに「掴めて
+    いない」と読めてしまう。判定できないことは判定できないと出す。
+    """
+    counts = failure_mode_breakdown(log_dir)
+    assert counts == {"success": 2, "unknown": 1}
+
+
+def test_failure_modes_are_derived_from_object_state(tmp_path: Path) -> None:
+    """記録があればタイムアウトの内訳が分かれること。
+
+    LIBERO は成功以外に終了条件を持たないため、失敗は定義上すべてタイムアウトに
+    なる。物体の軌道から内訳を復元できることが、失敗検知を評価するための前提に
+    なる (`docs/design.md` 10.13 節)。
+    """
+    rise = GRASP_HEIGHT_MARGIN * 5
+    directory = _write_log(
+        tmp_path / "logs",
+        n_episodes=3,
+        object_heights_per_episode=[
+            [1.0, 1.0, 1.0],  # index 0: 成功 (分類対象外)
+            [1.0, 1.0 + rise, 1.0],  # index 1: 失敗 — 掴んで落とした
+            [1.0, 1.0, 1.0],  # index 2: 成功 (分類対象外)
+        ],
+    )
+    assert failure_mode_breakdown(directory) == {"success": 2, "dropped": 1}
+
+
+def test_object_state_does_not_reach_the_episode(tmp_path: Path) -> None:
+    """物体の状態は `Episode` に載らないこと。
+
+    ESN の入力は要件書どおり action chunk と固有受容感覚に限る。物体の状態は
+    シミュレータからしか得られず、実機では手に入らない。入力に混ぜると
+    「シミュレータでしか動かない手法」になる。
+    """
+    directory = _write_log(
+        tmp_path / "logs",
+        n_episodes=1,
+        object_heights_per_episode=[[1.0, 1.2, 1.0]],
+    )
+    episode = OpenpiLogSource(directory).load().episodes[0]
+    assert episode.state.shape == (N_STEPS, STATE_DIM)
+    assert not hasattr(episode, "object_state")
+
+
+def test_failure_mode_breakdown_reports_a_missing_episode(log_dir: Path) -> None:
+    """エピソード npz が欠けていれば報告する。"""
+    next(iter((log_dir / EPISODES_DIRNAME).glob("*.npz"))).unlink()
+    with pytest.raises(FileNotFoundError, match="エピソードがありません"):
+        failure_mode_breakdown(log_dir)
