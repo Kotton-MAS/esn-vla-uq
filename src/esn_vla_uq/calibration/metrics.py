@@ -49,12 +49,16 @@ class ReliabilityCurve:
     """名目被覆率と経験被覆率の対応。
 
     Attributes:
-        nominal: 名目被覆率 `[L]`。
-        empirical: 経験被覆率 `[L]`。
+        nominal: 実際に評価できた名目被覆率 `[L]`。
+        empirical: 対応する経験被覆率 `[L]`。
+        unsupported: 較正標本が足りず評価できなかった名目被覆率。
+            **黙って落とさず必ず記録する。** 高い水準ほど多くの較正標本を要する
+            ため、落ちるのは決まって曲線の右端であり、ECE が実勢より小さく出る。
     """
 
     nominal: tuple[float, ...]
     empirical: tuple[float, ...]
+    unsupported: tuple[float, ...] = ()
 
     def expected_calibration_error(self) -> float:
         """名目と経験の差の絶対値の平均 (モジュール docstring の定義)。"""
@@ -71,6 +75,7 @@ class ReliabilityCurve:
         return {
             "nominal": list(self.nominal),
             "empirical": list(self.empirical),
+            "unsupported_levels": list(self.unsupported),
             "ece": self.expected_calibration_error(),
             "max_calibration_error": self.max_calibration_error(),
             "ece_definition": ECE_DEFINITION,
@@ -116,21 +121,39 @@ def reliability_curve(
 ) -> ReliabilityCurve:
     """名目被覆率ごとの経験被覆率を求める。
 
-    較正標本が少なく有限標本で保証できない水準 (高い名目被覆率) は、黙って
-    落とさず `ValueError` にする。曲線から点が消えると ECE が「都合よく」
-    小さくなるため。
+    較正標本が少なく有限標本で保証できない水準 (高い名目被覆率) は評価から外し、
+    **`unsupported` に記録する**。当初はここで `ValueError` にしていたが、その
+    設計だと標本の少ないデータセット (収集直後の openpi ログなど) で較正評価
+    そのものが止まってしまい、計算できる被覆率や ECE まで得られなくなる。
+
+    落とした事実を残すのは、消えるのが決まって曲線の右端 (高い水準) であり、
+    黙って落とすと ECE が実勢より小さく出るためである。
 
     Raises:
-        ValueError: 較正標本が、要求した名目水準のどれかに対して不足する場合。
+        ValueError: どの水準も評価できない場合 (較正標本が極端に少ない)。
     """
     nominal: list[float] = []
     empirical: list[float] = []
+    unsupported: list[float] = []
     for level in nominal_levels:
-        empirical.append(
-            conformal_coverage(calibration_scores, test_scores, 1.0 - level)
-        )
+        try:
+            coverage = conformal_coverage(calibration_scores, test_scores, 1.0 - level)
+        except ValueError:
+            unsupported.append(level)
+            continue
         nominal.append(level)
-    return ReliabilityCurve(nominal=tuple(nominal), empirical=tuple(empirical))
+        empirical.append(coverage)
+    if not nominal:
+        raise ValueError(
+            "reliability curve: どの名目水準も評価できませんでした "
+            f"(n_calibration={calibration_scores.shape[0]}, "
+            f"levels={list(nominal_levels)})"
+        )
+    return ReliabilityCurve(
+        nominal=tuple(nominal),
+        empirical=tuple(empirical),
+        unsupported=tuple(unsupported),
+    )
 
 
 def rank_data(values: NDArray[np.float64]) -> NDArray[np.float64]:

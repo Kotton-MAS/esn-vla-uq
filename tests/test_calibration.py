@@ -177,8 +177,11 @@ def test_normalized_detects_failures_while_absolute_cannot(
     normalized = run_calibration(
         dataset, config, score_kind="normalized", n_splits=N_SPLITS
     )
+    # 合成データは failure_onset を持つので細かいラベルが使われる。
+    assert absolute.detection.label == "failure_onset"
     assert absolute.detection.mean_auroc == pytest.approx(0.5, abs=1e-12)
     assert absolute.detection.std_auroc == pytest.approx(0.0, abs=1e-12)
+    assert normalized.detection.mean_auroc is not None
     # 観測量ベースの難易度に変えて 0.37 -> 0.87 になった。0.75 は実測 0.869 に
     # 対する余裕を見た下限で、学習型の推定に戻すと (0.28-0.61) 必ず落ちる。
     assert normalized.detection.mean_auroc > 0.75
@@ -208,6 +211,7 @@ def test_report_is_json_serializable(report: CalibrationReport) -> None:
     payload = json.loads(json.dumps(report.to_dict(), allow_nan=False))
     assert payload["coverage"]["nominal"] == pytest.approx(0.9)
     assert payload["detection"]["mean_auroc"] >= 0.0
+    assert payload["detection"]["label"] == "failure_onset"
 
 
 def test_same_seed_reproduces_the_report(dataset: RolloutDataset) -> None:

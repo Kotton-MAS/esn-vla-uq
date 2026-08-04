@@ -16,6 +16,7 @@ prediction.
 ```bash
 uv sync
 uv run esn-vla-uq calibrate     # coverage / ECE / failure-detection AUROC
+uv run esn-vla-uq calibrate --input <openpi-log-dir>   # collected openpi rollouts
 uv run esn-vla-uq diagnose      # spectral radius / ESP / memory capacity
 ```
 

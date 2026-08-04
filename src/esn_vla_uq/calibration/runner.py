@@ -31,7 +31,7 @@ from esn_vla_uq.calibration.report import (
 )
 from esn_vla_uq.data.schema import RolloutDataset
 from esn_vla_uq.esn.config import ESNConfig
-from esn_vla_uq.provenance import SYNTHETIC_DATA_SOURCE
+from esn_vla_uq.provenance import DataSource
 from esn_vla_uq.uncertainty.conformal import DEFAULT_ALPHA, SplitConformalPredictor
 from esn_vla_uq.uncertainty.nonconformity import DEFAULT_SCORE_KIND, ScoreKind
 from esn_vla_uq.uncertainty.split import (
@@ -42,7 +42,7 @@ from esn_vla_uq.uncertainty.split import (
 from esn_vla_uq.uncertainty.targets import (
     EpisodeSamples,
     build_samples,
-    stack_failure_labels,
+    detection_labels,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,25 @@ SYNTHETIC_DATA_CAVEAT: Final[str] = (
     "失敗検知の成績は合成データ生成器が失敗区間に注入した分布シフトを"
     "検出しているにすぎず、実ロールアウトへの転移は検証されていない。"
 )
-"""合成データであることの明示 (`docs/design.md` 7 節の誠実性宣言)。"""
+"""合成データであることの明示 (`docs/design.md` 7 節の誠実性宣言)。
+
+**出所が合成データのときだけ付ける。** 実ログに対して「これは合成データだ」と
+書いたレポートを出すと、誠実性宣言のつもりが逆に事実と違う注記になる。
+"""
+
+DETECTION_UNAVAILABLE_REASON: Final[str] = (
+    "どの分割でも陽性か陰性のどちらかが 0 件で、AUROC が定義できなかった。"
+    "失敗エピソードが含まれていないか、全て失敗している可能性がある。"
+)
+"""失敗検知を計算できなかったときの理由。"""
+
+EPISODE_LABEL_CAVEAT: Final[str] = (
+    "失敗検知のラベルは episode_success (失敗エピソードの全ステップを陽性) を"
+    "使っている。失敗開始時刻を持たない出所 (openpi) では失敗開始以降だけを"
+    "陽性にする細かいラベルが作れないため。合成データでの failure_onset ベースの"
+    "数値とは粒度が違うので、直接比較しないこと。"
+)
+"""粗いラベルを使ったときの注意。"""
 
 ABSOLUTE_SCORE_CAVEAT: Final[str] = (
     "score_kind=absolute の予測区間は全ステップで同じ幅になるため、"
@@ -84,7 +102,8 @@ class _SplitOutcome:
     """1 分割分の評価結果。"""
 
     coverage: float
-    auroc: float
+    auroc: float | None
+    label_kind: str
     mean_width: float
     n_test_samples: int
     n_test_episodes: int
@@ -111,10 +130,11 @@ def _evaluate_split(
 
     intervals = predictor.predict_intervals(split.test)
     targets = predictor.stacked_targets(split.test)
-    labels = stack_failure_labels(split.test)
+    labels, label_kind = detection_labels(split.test)
     return _SplitOutcome(
         coverage=float(intervals.covers(targets).mean()),
-        auroc=detection_auroc(intervals.uncertainty, labels),
+        auroc=_maybe_auroc(intervals.uncertainty, labels),
+        label_kind=label_kind,
         mean_width=float(intervals.uncertainty.mean()),
         n_test_samples=int(targets.shape[0]),
         n_test_episodes=len(split.test),
@@ -181,7 +201,8 @@ def run_calibration(
     ]
 
     coverages = np.asarray([outcome.coverage for outcome in outcomes])
-    aurocs = np.asarray([outcome.auroc for outcome in outcomes])
+    measured = [outcome.auroc for outcome in outcomes if outcome.auroc is not None]
+    aurocs = np.asarray(measured)
     coverage = CoverageSummary(
         nominal=1.0 - alpha,
         mean=float(coverages.mean()),
@@ -197,11 +218,13 @@ def run_calibration(
         ),
     )
     detection = DetectionSummary(
-        mean_auroc=float(aurocs.mean()),
-        std_auroc=float(aurocs.std()),
+        mean_auroc=float(aurocs.mean()) if measured else None,
+        std_auroc=float(aurocs.std()) if measured else None,
         per_split=tuple(float(value) for value in aurocs),
+        label=outcomes[0].label_kind,
         n_positive=int(np.mean([outcome.n_positive for outcome in outcomes])),
         n_negative=int(np.mean([outcome.n_negative for outcome in outcomes])),
+        unavailable_reason=None if measured else DETECTION_UNAVAILABLE_REASON,
     )
 
     first = outcomes[0]
@@ -224,9 +247,23 @@ def run_calibration(
         coverage=coverage,
         reliability=curve,
         detection=detection,
-        caveats=_caveats(first.warning, score_kind),
-        data_source=SYNTHETIC_DATA_SOURCE,
+        caveats=_caveats(first.warning, score_kind, first.label_kind, dataset.source),
+        data_source=dataset.source,
     )
+
+
+def _maybe_auroc(
+    scores: NDArray[np.float64], labels: NDArray[np.bool_]
+) -> float | None:
+    """両クラスが揃っているときだけ AUROC を返す。
+
+    openpi のログのように失敗エピソードが 1 つも含まれない分割では陽性が 0 に
+    なり AUROC が定義できない。**その場合に例外で止めない。** 被覆率や ECE は
+    問題なく計算できるので、検知だけを `None` にして理由を残す。
+    """
+    if not labels.any() or labels.all():
+        return None
+    return detection_auroc(scores, labels)
 
 
 def _mean_reliability_curve(outcomes: Sequence[_SplitOutcome]) -> ReliabilityCurve:
@@ -241,16 +278,39 @@ def _mean_reliability_curve(outcomes: Sequence[_SplitOutcome]) -> ReliabilityCur
         )
         for outcome in outcomes
     ]
-    empirical = np.mean([curve.empirical for curve in curves], axis=0)
+    # 分割ごとに評価できる水準が違いうるので、全分割で共通して評価できた
+    # 水準だけを平均する。1 つでも落ちた水準は unsupported に回す。
+    supported = sorted(set.intersection(*(set(curve.nominal) for curve in curves)))
+    if not supported:
+        raise ValueError("reliability curve: 全分割で共通の名目水準がありません")
+    empirical = [
+        float(
+            np.mean([curve.empirical[curve.nominal.index(level)] for curve in curves])
+        )
+        for level in supported
+    ]
+    dropped = tuple(
+        level for level in DEFAULT_NOMINAL_LEVELS if level not in set(supported)
+    )
     return ReliabilityCurve(
-        nominal=DEFAULT_NOMINAL_LEVELS,
-        empirical=tuple(float(value) for value in empirical),
+        nominal=tuple(supported),
+        empirical=tuple(empirical),
+        unsupported=dropped,
     )
 
 
-def _caveats(split_warning: str | None, score_kind: ScoreKind) -> tuple[str, ...]:
+def _caveats(
+    split_warning: str | None,
+    score_kind: ScoreKind,
+    label_kind: str,
+    data_source: DataSource,
+) -> tuple[str, ...]:
     """レポートに載せる注意書きを組み立てる。"""
-    caveats = [SYNTHETIC_DATA_CAVEAT, EFFECTIVE_SAMPLE_SIZE_CAVEAT]
+    caveats = [EFFECTIVE_SAMPLE_SIZE_CAVEAT]
+    if data_source == "synthetic":
+        caveats.insert(0, SYNTHETIC_DATA_CAVEAT)
+    if label_kind == "episode_success":
+        caveats.append(EPISODE_LABEL_CAVEAT)
     if split_warning is not None:
         caveats.append(split_warning)
     if score_kind == "absolute":
