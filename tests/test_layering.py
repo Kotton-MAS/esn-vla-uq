@@ -15,10 +15,9 @@
 
 1. `io.py` / `invariants.py` / `sources/base.py` が具象供給元を **import 文と
    して持たない**。これらに手を入れる際、具象へ依存を足せば静的検査で落ちる。
-2. **任意依存を持つ具象 (openpi) はどこからも巻き込まれない。** 合成データ
-   生成器は numpy と本パッケージだけに依存するためロードされても実害が無く、
-   問題になるのは openpi のような外部依存を持つ供給元だけである。この区別を
-   テストの対象にする。
+2. **本パッケージの import が openpi / LIBERO を要求しない。** 要件書の
+   「openpi をランタイム依存に含めない」の直接検査であり、`EXTERNAL_PACKAGES`
+   の docstring に経緯を書いた。
 """
 
 from __future__ import annotations
@@ -42,12 +41,17 @@ CONCRETE_SOURCE_MODULES = (
 )
 """具象の供給元 (実データ形式を知っているモジュール)。"""
 
-OPTIONAL_DEPENDENCY_MODULES = ("esn_vla_uq.data.sources.openpi",)
-"""任意依存 (openpi) を必要とする供給元。
+EXTERNAL_PACKAGES = ("openpi", "openpi_client", "libero", "robosuite")
+"""本パッケージが**決して要求してはならない**外部パッケージ。
 
-Sprint 2 で追加される。存在しないうちからここに書いておくことで、追加された
-時点で本テストが自動的に適用される。それまでは意図的に空振りする番人であり、
-現時点で通ることを「検証済み」とは読まないこと。
+要件書の「openpi をランタイム依存に含めない」を直接検査するための一覧。
+
+当初は「`esn_vla_uq.data.sources.openpi` をロードしないこと」を代理指標にして
+いた。実装してみると `sources/openpi.py` は収集済みログのファイルを読むだけで
+**openpi のパッケージを一切 import しない**ことが分かったため、その代理指標は
+実態と合わなくなった (自前モジュールのロードを禁じても意味が無い)。守りたいのは
+「インストールしていなくても動く」ことなので、外部パッケージが要求されないことを
+直接見る。こちらのほうが強く、かつ今日から効く。
 """
 
 
@@ -84,23 +88,19 @@ def test_module_does_not_import_concrete_sources(relative_path: str) -> None:
 
 @pytest.mark.parametrize(
     "relative_path",
-    ["data/__init__.py", "data/sources/__init__.py"],
+    ["data/sources/openpi.py", "data/io.py", "data/schema.py"],
 )
-def test_package_init_does_not_import_optional_dependency_sources(
-    relative_path: str,
-) -> None:
-    """パッケージ `__init__` は任意依存を持つ供給元を eager import しない。
+def test_modules_do_not_import_external_packages(relative_path: str) -> None:
+    """外部パッケージ (openpi / LIBERO) を import しないこと。
 
-    `__init__.py` での再エクスポートは、その配下のどれか 1 つを import した
-    だけで対象モジュールをロードさせる。openpi 供給元をここに足すと、
-    `esn_vla_uq.data.schema` を触るだけのコードにまで openpi が必要になる
-    (A1)。`SyntheticRolloutSource` は任意依存を持たないため対象外。
+    `sources/openpi.py` が読むのは収集スクリプトが書き出したファイルだけで、
+    openpi の policy server にも LIBERO 環境にも触らない。この性質が崩れると、
+    ログを読むだけの利用者にまで重い依存が要求される。
     """
-    forbidden = _imported_modules(relative_path).intersection(
-        OPTIONAL_DEPENDENCY_MODULES
-    )
+    imported = {name.split(".")[0] for name in _imported_modules(relative_path)}
+    forbidden = imported.intersection(EXTERNAL_PACKAGES)
     assert not forbidden, (
-        f"{relative_path} が任意依存の供給元を再エクスポートしています: {forbidden}"
+        f"{relative_path} が外部パッケージを import しています: {forbidden}"
     )
 
 
@@ -141,16 +141,35 @@ def _modules_loaded_by(import_statement: str) -> set[str]:
     return set(loaded)
 
 
-def test_importing_data_does_not_load_optional_dependency_sources() -> None:
-    """`esn_vla_uq.data` を import しても openpi 供給元がロードされないこと。
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "import esn_vla_uq.data",
+        "import esn_vla_uq.cli",
+        "import esn_vla_uq.calibration",
+    ],
+)
+def test_importing_the_package_does_not_require_external_packages(
+    statement: str,
+) -> None:
+    """本パッケージの import が openpi / LIBERO を要求しないこと。
 
-    静的な import 検査と違い、再エクスポートの連鎖など間接的な経路も捉える。
-    Sprint 2 で openpi 供給元が加わるまでは空振りする (本モジュール docstring
-    の `OPTIONAL_DEPENDENCY_MODULES` を参照)。
+    要件書の「openpi をランタイム依存に含めない」の直接検査。CLI は
+    `--input` の解決で `OpenpiLogSource` を使うため、そこからも外部パッケージが
+    引き込まれないことを確認する。静的な import 検査と違い、間接的な経路も
+    捉える。
     """
-    loaded = _modules_loaded_by("import esn_vla_uq.data")
-    assert "esn_vla_uq.data.io" in loaded
-    assert not loaded.intersection(OPTIONAL_DEPENDENCY_MODULES)
+    script = (
+        f"{statement}\n"
+        "import sys, json\n"
+        "print(json.dumps(sorted(m.split('.')[0] for m in sys.modules)))\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=True
+    )
+    top_level = set(json.loads(completed.stdout))
+    forbidden = top_level.intersection(EXTERNAL_PACKAGES)
+    assert not forbidden, f"{statement} が外部パッケージを引き込みました: {forbidden}"
 
 
 def test_diagnostics_does_not_load_data_layer() -> None:

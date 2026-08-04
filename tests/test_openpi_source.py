@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -213,3 +214,135 @@ def test_oversized_chunk_horizon_is_rejected(tmp_path: Path) -> None:
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ValueError, match="上限を超えています"):
         OpenpiLogSource(directory).load()
+
+
+# --- CLI からの読み込み -----------------------------------------------------
+
+
+def test_cli_input_resolves_an_openpi_log_directory(log_dir: Path) -> None:
+    """`--input` にディレクトリを渡すと openpi ログとして読むこと。"""
+    from esn_vla_uq.cli.inputs import load_rollouts
+
+    dataset = load_rollouts(log_dir)
+    assert dataset.source == "openpi"
+    assert dataset.chunk_horizon == OPENPI_CHUNK_HORIZON
+
+
+def test_cli_input_resolves_an_npz_file(tmp_path: Path) -> None:
+    """`--input` にファイルを渡すと本リポジトリの保存形式として読むこと。"""
+    from esn_vla_uq.cli.inputs import load_rollouts
+    from esn_vla_uq.data.io import save_dataset
+    from esn_vla_uq.data.synthetic import generate_dataset
+
+    path = save_dataset(generate_dataset(seed=0, n_episodes=2), tmp_path / "d.npz")
+    assert load_rollouts(path).source == "synthetic"
+
+
+def test_cli_input_defaults_to_the_bundled_sample() -> None:
+    from esn_vla_uq.cli.inputs import load_rollouts
+
+    assert load_rollouts(None).source == "synthetic"
+
+
+def test_cli_input_reports_a_missing_path(tmp_path: Path) -> None:
+    from esn_vla_uq.cli.inputs import load_rollouts
+
+    with pytest.raises(FileNotFoundError, match="見つかりません"):
+        load_rollouts(tmp_path / "nope")
+
+
+def test_cli_input_reports_a_directory_without_manifest(tmp_path: Path) -> None:
+    """ディレクトリだがログ形式でない場合に何が足りないかを伝えること。"""
+    from esn_vla_uq.cli.inputs import load_rollouts
+
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(FileNotFoundError, match=re.escape("manifest.json")):
+        load_rollouts(tmp_path / "empty")
+
+
+def test_calibrate_runs_on_openpi_logs(log_dir: Path, tmp_path: Path) -> None:
+    """openpi ログに対して calibrate が動くこと (収集後すぐ検証へ移れる)。"""
+    from esn_vla_uq.cli import main
+
+    exit_code = main(
+        [
+            "calibrate",
+            "--input",
+            str(log_dir),
+            "--output-dir",
+            str(tmp_path / "out"),
+            "--n-reservoir",
+            "30",
+            "--n-splits",
+            "2",
+        ]
+    )
+    assert exit_code == 0
+
+
+def test_report_records_openpi_as_the_data_source(log_dir: Path) -> None:
+    """出所が openpi のとき、レポートが合成データだと主張しないこと。
+
+    `data_source` をハードコードしていたため、openpi のログに対して
+    「これは合成データだ」というレポートが出ていた。誠実性宣言のつもりの
+    注記が、実データに対しては事実と違う注記になる。
+    """
+    from esn_vla_uq.calibration.runner import SYNTHETIC_DATA_CAVEAT, run_calibration
+    from esn_vla_uq.esn import ESNConfig
+
+    report = run_calibration(
+        OpenpiLogSource(log_dir).load(),
+        ESNConfig(n_reservoir=30, seed=0),
+        n_splits=1,
+    )
+    assert report.data_source == "openpi"
+    assert SYNTHETIC_DATA_CAVEAT not in report.caveats
+
+
+def test_detection_falls_back_to_episode_level_labels(log_dir: Path) -> None:
+    """`failure_onset` が無い出所では粗いラベルへ落として計算できること。
+
+    落とさないと陽性が 0 件になり AUROC が定義できず、被覆率まで含めて
+    較正評価そのものが失敗していた。
+    """
+    from esn_vla_uq.calibration.runner import EPISODE_LABEL_CAVEAT, run_calibration
+    from esn_vla_uq.esn import ESNConfig
+
+    report = run_calibration(
+        OpenpiLogSource(log_dir).load(),
+        ESNConfig(n_reservoir=30, seed=0),
+        n_splits=1,
+    )
+    assert report.detection.label == "episode_success"
+    assert EPISODE_LABEL_CAVEAT in report.caveats
+
+
+def test_unsupported_nominal_levels_are_recorded(log_dir: Path) -> None:
+    """較正標本が足りない水準を黙って落とさないこと。
+
+    落ちるのは決まって曲線の右端 (高い水準) なので、黙って落とすと ECE が
+    実勢より小さく出る。
+    """
+    from esn_vla_uq.calibration.runner import run_calibration
+    from esn_vla_uq.esn import ESNConfig
+
+    report = run_calibration(
+        OpenpiLogSource(log_dir).load(),
+        ESNConfig(n_reservoir=30, seed=0),
+        n_splits=1,
+    )
+    payload = report.reliability.to_dict()
+    assert "unsupported_levels" in payload
+    # 較正 1 エピソード (39 標本) では名目 99% を有限標本で保証できない。
+    assert 0.99 in report.reliability.unsupported
+
+
+def test_demo_records_openpi_as_the_data_source(log_dir: Path) -> None:
+    """デモの図も出所を偽らないこと (図だけが独り歩きするため)。"""
+    from esn_vla_uq.demo import build_demo_frames
+    from esn_vla_uq.esn import ESNConfig
+
+    frames = build_demo_frames(
+        OpenpiLogSource(log_dir).load(), ESNConfig(n_reservoir=30, seed=0)
+    )
+    assert frames.data_source == "openpi"

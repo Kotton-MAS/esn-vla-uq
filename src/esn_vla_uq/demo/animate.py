@@ -125,7 +125,7 @@ def write_demo_animation(
     figure.suptitle(
         f"conformal prediction interval  "
         f"(nominal coverage {frames.nominal_coverage:.0%}, "
-        f"score={frames.score_kind}, source=synthetic) "
+        f"score={frames.score_kind}, source={frames.data_source}) "
         "— uncertainty reacts to the failure, it does not anticipate it",
         fontsize=9,
     )

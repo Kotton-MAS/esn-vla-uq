@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 from numpy.typing import NDArray
@@ -147,11 +148,52 @@ def stack_targets(samples: Sequence[EpisodeSamples]) -> NDArray[np.float64]:
     return np.concatenate([sample.targets for sample in samples], axis=0)
 
 
+DetectionLabel = Literal["failure_onset", "episode_success"]
+"""失敗検知の評価に使うラベルの種類。
+
+- ``"failure_onset"``: 失敗開始以降のステップを陽性とする。**細かいが、
+  `failure_onset` を持つ出所でしか作れない**(合成データのみ)。
+- ``"episode_success"``: 失敗エピソードの全ステップを陽性とする。粗いが
+  どの出所でも作れる。openpi の評価ループには失敗開始時刻の概念が無い
+  (`data/sources/openpi.py`) ため、実ログではこちらになる。
+"""
+
+
 def stack_failure_labels(samples: Sequence[EpisodeSamples]) -> NDArray[np.bool_]:
     """標本列の「失敗開始以降か」ラベルを連結して `[N]` にする。"""
     if not samples:
         raise ValueError("samples: 1 件以上必要です")
     return np.concatenate([sample.after_failure_onset() for sample in samples], axis=0)
+
+
+def stack_episode_failure_labels(
+    samples: Sequence[EpisodeSamples],
+) -> NDArray[np.bool_]:
+    """失敗エピソードの全ステップを陽性としたラベルを `[N]` で返す。"""
+    if not samples:
+        raise ValueError("samples: 1 件以上必要です")
+    return np.concatenate(
+        [
+            np.full(sample.n_samples, not sample.success, dtype=np.bool_)
+            for sample in samples
+        ],
+        axis=0,
+    )
+
+
+def detection_labels(
+    samples: Sequence[EpisodeSamples],
+) -> tuple[NDArray[np.bool_], DetectionLabel]:
+    """使える中で最も細かいラベルと、その種類を返す。
+
+    `failure_onset` を持つ標本が 1 つでもあればそちらを使う。持たない出所
+    (openpi) では全て False になってしまい、AUROC が計算できないため
+    エピソード単位の成否へ落とす。**どちらを使ったかはレポートに残す**
+    (粒度が違う数値を並べて比較できてしまうため)。
+    """
+    if any(sample.failure_onset is not None for sample in samples):
+        return stack_failure_labels(samples), "failure_onset"
+    return stack_episode_failure_labels(samples), "episode_success"
 
 
 def input_segments(samples: Sequence[EpisodeSamples]) -> list[NDArray[np.float64]]:

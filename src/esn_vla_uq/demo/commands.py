@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Final
 
 from esn_vla_uq.cli import options
-from esn_vla_uq.data.io import load_bundled_sample, load_dataset
+from esn_vla_uq.cli.inputs import load_rollouts
 from esn_vla_uq.demo.animate import (
     DEFAULT_FPS,
     DEFAULT_MAX_FRAMES,
@@ -40,7 +40,10 @@ def add_demo_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
         "--input",
         type=Path,
         default=None,
-        help="対象の .npz のパス (既定: 同梱の合成サンプルデータ)",
+        help=(
+            "評価する .npz、または収集した openpi ログのディレクトリ "
+            "(既定: 同梱の合成サンプルデータ)"
+        ),
     )
     parser.add_argument(
         "--output",
@@ -144,8 +147,7 @@ def execute_demo(opts: DemoOptions) -> int:
     """
     seed = opts.seed
     config = ESNConfig(n_reservoir=opts.n_reservoir, seed=seed)
-    input_path = opts.input
-    dataset = load_bundled_sample() if input_path is None else load_dataset(input_path)
+    dataset = load_rollouts(opts.input)
 
     frames = build_demo_frames(
         dataset,

@@ -15,6 +15,7 @@ VLA (vision-language-action) ポリシーの**閉形式・アンサンブル不�
 ```bash
 uv sync
 uv run esn-vla-uq calibrate     # 被覆率 / ECE / 失敗検知 AUROC
+uv run esn-vla-uq calibrate --input <openpi ログのディレクトリ>   # 収集した実ログ
 uv run esn-vla-uq diagnose      # スペクトル半径 / ESP / メモリ容量
 ```
 

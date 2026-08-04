@@ -24,6 +24,7 @@ from numpy.typing import NDArray
 
 from esn_vla_uq.data.schema import STATE_DIM, RolloutDataset
 from esn_vla_uq.esn.config import ESNConfig
+from esn_vla_uq.provenance import DataSource
 from esn_vla_uq.uncertainty.conformal import DEFAULT_ALPHA, SplitConformalPredictor
 from esn_vla_uq.uncertainty.nonconformity import DEFAULT_SCORE_KIND, ScoreKind
 from esn_vla_uq.uncertainty.split import (
@@ -52,6 +53,7 @@ class DemoFrames:
         failure_onset: 失敗が始まったステップ。成功エピソードでは `None`。
         nominal_coverage: 予測区間の名目被覆率 (図の説明に使う)。
         score_kind: 使った非適合度スコア。
+        data_source: 数値の出所。図の中にも出す (図だけが独り歩きするため)。
     """
 
     episode_id: str
@@ -63,6 +65,7 @@ class DemoFrames:
     failure_onset: int | None
     nominal_coverage: float
     score_kind: ScoreKind
+    data_source: DataSource
 
     @property
     def n_steps(self) -> int:
@@ -150,7 +153,8 @@ def build_demo_frames(
     candidates = _candidates(split.test, episode_id)
 
     scored = [
-        _frames_for(sample, predictor, alpha, score_kind) for sample in candidates
+        _frames_for(sample, predictor, alpha, score_kind, dataset.source)
+        for sample in candidates
     ]
     if episode_id is not None:
         return scored[0]
@@ -184,6 +188,7 @@ def _frames_for(
     predictor: SplitConformalPredictor,
     alpha: float,
     score_kind: ScoreKind,
+    data_source: DataSource,
 ) -> DemoFrames:
     """1 エピソード分のフレームデータを組み立てる。"""
     intervals = predictor.predict_intervals([sample])
@@ -200,6 +205,7 @@ def _frames_for(
         failure_onset=_onset_in_frames(sample),
         nominal_coverage=1.0 - alpha,
         score_kind=score_kind,
+        data_source=data_source,
     )
 
 

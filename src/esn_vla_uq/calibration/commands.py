@@ -23,7 +23,7 @@ from esn_vla_uq.calibration.report import (
 )
 from esn_vla_uq.calibration.runner import DEFAULT_N_SPLITS, run_calibration
 from esn_vla_uq.cli import options
-from esn_vla_uq.data.io import load_bundled_sample, load_dataset
+from esn_vla_uq.cli.inputs import load_rollouts
 from esn_vla_uq.esn.config import (
     DEFAULT_LEAK_RATE,
     DEFAULT_N_RESERVOIR,
@@ -54,7 +54,10 @@ def add_calibrate_arguments(
         "--input",
         type=Path,
         default=None,
-        help="評価する .npz のパス (既定: 同梱の合成サンプルデータ)",
+        help=(
+            "評価する .npz、または収集した openpi ログのディレクトリ "
+            "(既定: 同梱の合成サンプルデータ)"
+        ),
     )
     parser.add_argument(
         "--alpha",
@@ -173,8 +176,7 @@ def execute_calibrate(opts: CalibrateOptions) -> int:
         leak_rate=opts.leak_rate,
         seed=seed,
     )
-    input_path = opts.input
-    dataset = load_bundled_sample() if input_path is None else load_dataset(input_path)
+    dataset = load_rollouts(opts.input)
 
     report = run_calibration(
         dataset,

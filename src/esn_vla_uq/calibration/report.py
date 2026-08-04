@@ -43,15 +43,20 @@ class DetectionSummary:
             区間幅が定数 (全て同順位) になるため**定義上厳密に 0.5**。
         std_auroc: AUROC の標準偏差。
         per_split: 分割ごとの AUROC。
-        n_positive: 失敗開始以降のステップ数 (1 分割あたり平均)。
-        n_negative: それ以外のステップ数 (1 分割あたり平均)。
+        label: 使ったラベルの種類。`"failure_onset"` (細かい) と
+            `"episode_success"` (粗い) では数値の意味が違うため必ず記録する。
+        n_positive: 陽性ステップ数 (1 分割あたり平均)。
+        n_negative: 陰性ステップ数 (1 分割あたり平均)。
+        unavailable_reason: 計算できなかった理由。計算できた場合は `None`。
     """
 
-    mean_auroc: float
-    std_auroc: float
+    mean_auroc: float | None
+    std_auroc: float | None
     per_split: tuple[float, ...]
+    label: str
     n_positive: int
     n_negative: int
+    unavailable_reason: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         """JSON シリアライズ可能な辞書へ変換する。"""
@@ -176,13 +181,20 @@ class CalibrationReport:
             self.reliability.max_calibration_error(),
             len(self.reliability.nominal),
         )
-        logger.info(
-            "detection: auroc=%.4f (std=%.4f) n_positive=%d n_negative=%d",
-            self.detection.mean_auroc,
-            self.detection.std_auroc,
-            self.detection.n_positive,
-            self.detection.n_negative,
-        )
+        if self.detection.mean_auroc is None:
+            logger.warning(
+                "detection: 計算できませんでした (%s)",
+                self.detection.unavailable_reason,
+            )
+        else:
+            logger.info(
+                "detection: auroc=%.4f (std=%.4f) label=%s n_positive=%d n_negative=%d",
+                self.detection.mean_auroc,
+                self.detection.std_auroc,
+                self.detection.label,
+                self.detection.n_positive,
+                self.detection.n_negative,
+            )
         for caveat in self.caveats:
             logger.warning("caveat: %s", caveat)
 
