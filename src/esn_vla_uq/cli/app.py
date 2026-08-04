@@ -15,13 +15,14 @@ from __future__ import annotations
 import argparse
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Final
+from typing import Final, NamedTuple
 
 from esn_vla_uq import __version__
 from esn_vla_uq.calibration.commands import add_calibrate_arguments, run_calibrate
 from esn_vla_uq.data.commands import add_gen_sample_data_arguments, run_gen_sample_data
+from esn_vla_uq.demo.commands import add_demo_arguments, run_demo
 from esn_vla_uq.diagnostics.commands import add_diagnose_arguments, run_diagnose
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,50 @@ def _build_common_parser() -> argparse.ArgumentParser:
     return common
 
 
+class _Subcommand(NamedTuple):
+    """サブコマンド 1 つ分の定義。
+
+    A6 への対応。以前はサブコマンドを 1 つ足すのに、import・パーサ登録・
+    ハンドラのラッパ・`_dispatch` の分岐という 4 箇所を同時に編集する必要が
+    あった。定義をこのテーブル 1 箇所にまとめ、`set_defaults(handler=...)` で
+    振り分ける (argparse の標準機能)。
+    """
+
+    name: str
+    help: str
+    add_arguments: Callable[[argparse.ArgumentParser], argparse.ArgumentParser]
+    handler: Callable[[argparse.Namespace], int]
+
+
+SUBCOMMANDS: Final[tuple[_Subcommand, ...]] = (
+    _Subcommand(
+        name="diagnose",
+        help="リザバー診断 (スペクトル半径 / ESP / メモリ容量) を実行する",
+        add_arguments=add_diagnose_arguments,
+        handler=run_diagnose,
+    ),
+    _Subcommand(
+        name="gen-sample-data",
+        help="合成ロールアウトのサンプルデータを生成する",
+        add_arguments=add_gen_sample_data_arguments,
+        handler=run_gen_sample_data,
+    ),
+    _Subcommand(
+        name="calibrate",
+        help="conformal 予測区間の較正評価 (被覆率 / ECE / 失敗検知) を実行する",
+        add_arguments=add_calibrate_arguments,
+        handler=run_calibrate,
+    ),
+    _Subcommand(
+        name="demo",
+        help="不確実性バーのデモアニメーション (GIF) を生成する",
+        add_arguments=add_demo_arguments,
+        handler=run_demo,
+    ),
+)
+"""サブコマンドの一覧。追加するときはここに 1 要素足すだけでよい。"""
+
+
 def build_parser() -> argparse.ArgumentParser:
     """トップレベルのパーサを構築する。"""
     parser = argparse.ArgumentParser(
@@ -83,27 +128,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     common = _build_common_parser()
     subparsers = parser.add_subparsers(dest="command", required=True)
-    add_diagnose_arguments(
-        subparsers.add_parser(
-            "diagnose",
-            parents=[common],
-            help="リザバー診断 (スペクトル半径 / ESP / メモリ容量) を実行する",
+    for subcommand in SUBCOMMANDS:
+        subparser = subparsers.add_parser(
+            subcommand.name, parents=[common], help=subcommand.help
         )
-    )
-    add_gen_sample_data_arguments(
-        subparsers.add_parser(
-            "gen-sample-data",
-            parents=[common],
-            help="合成ロールアウトのサンプルデータを生成する",
-        )
-    )
-    add_calibrate_arguments(
-        subparsers.add_parser(
-            "calibrate",
-            parents=[common],
-            help="conformal 予測区間の較正評価 (被覆率 / ECE / 失敗検知) を実行する",
-        )
-    )
+        subcommand.add_arguments(subparser)
+        subparser.set_defaults(handler=subcommand.handler)
     return parser
 
 
@@ -120,30 +150,12 @@ def _configure_logging(level_name: str) -> None:
     )
 
 
-def _run_diagnose(args: argparse.Namespace) -> int:
-    """`diagnose` サブコマンドを実行する (実体は `diagnostics.commands`)。"""
-    return run_diagnose(args)
-
-
-def _run_gen_sample_data(args: argparse.Namespace) -> int:
-    """`gen-sample-data` サブコマンドを実行する (実体は `data.commands`)。"""
-    return run_gen_sample_data(args)
-
-
-def _run_calibrate(args: argparse.Namespace) -> int:
-    """`calibrate` サブコマンドを実行する (実体は `calibration.commands`)。"""
-    return run_calibrate(args)
-
-
 def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
-    """サブコマンドへ振り分ける。"""
-    if args.command == "diagnose":
-        return _run_diagnose(args)
-    if args.command == "gen-sample-data":
-        return _run_gen_sample_data(args)
-    if args.command == "calibrate":
-        return _run_calibrate(args)
-    parser.error(f"unknown command: {args.command}")
+    """`set_defaults(handler=...)` で登録したハンドラを呼ぶ。"""
+    handler: Callable[[argparse.Namespace], int] | None = getattr(args, "handler", None)
+    if handler is None:
+        parser.error(f"unknown command: {args.command}")
+    return handler(args)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

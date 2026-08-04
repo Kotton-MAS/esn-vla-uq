@@ -2,6 +2,7 @@
 
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -9,11 +10,24 @@ import pytest
 from esn_vla_uq import __version__
 from esn_vla_uq.cli import build_parser, main
 
-EXPECTED_VERSION = "0.1.0.dev0"
-SUBCOMMANDS = ("diagnose", "gen-sample-data")
+
+def _pyproject_version() -> str:
+    """`pyproject.toml` の version を読む。
+
+    テスト側にバージョンを書き写すと、リリースのたびに手で同期する箇所が
+    増える (U3 と同じ drift)。唯一の真実から読む。
+    """
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    with pyproject.open("rb") as handle:
+        return str(tomllib.load(handle)["project"]["version"])
+
+
+EXPECTED_VERSION = _pyproject_version()
+SUBCOMMANDS = ("diagnose", "gen-sample-data", "calibrate", "demo")
 
 
 def test_package_version_matches_pyproject() -> None:
+    """インストール済みメタデータと pyproject が一致すること。"""
     assert __version__ == EXPECTED_VERSION
 
 
