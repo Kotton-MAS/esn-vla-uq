@@ -5,9 +5,9 @@
 書式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に従い、
 バージョニングは [Semantic Versioning](https://semver.org/lang/ja/) に従います。
 
-v0.1.0 は未リリースです。それまでの間、公開 API は予告なく変更されることがあります。
+v0.1.0 が最初のリリースです。
 
-## [Unreleased]
+## [0.1.0] - 2026-08-04
 
 ### Added
 
@@ -47,6 +47,12 @@ v0.1.0 は未リリースです。それまでの間、公開 API は予告な�
 
 - `gen-sample-data --force`: 既存の出力を明示的に上書きする
 
+- **デモアニメーション** (`esn-vla-uq demo`): 失敗エピソードの不確実性推移を GIF に
+  する。フレームデータ (`demo/frames.py`) と描画 (`demo/animate.py`) を分離してあり、
+  実 LIBERO 映像が入手できた時点で前者だけを差し替えられる
+
+- README を英語主体に刷新し、`README.ja.md` を併設
+
 ### Changed
 
 - 診断の実行を `diagnostics/runner.py` へ分離し、`diagnostics/report.py` は
@@ -56,6 +62,8 @@ v0.1.0 は未リリースです。それまでの間、公開 API は予告な�
 - 供給元を `data/sources/` に分割し、抽象 (`base.py`) と具象を分離した
 - 出所ごとの不変条件を `data/invariants.py` に集約し、`data/io.py` が具象の
   データ形式を知らないようにした
+- CLI のサブコマンド定義を `cli/app.py` のテーブル 1 箇所へ集約した。以前は
+  サブコマンドを 1 つ足すのに 4 箇所を同時編集する必要があった (A6)
 
 ### Fixed
 
@@ -83,4 +91,13 @@ v0.1.0 は未リリースです。それまでの間、公開 API は予告な�
 - `esn_vla_uq.data.source` モジュール (`esn_vla_uq.data.sources` へ移行)。
   `esn_vla_uq.data` からの再エクスポート名は変更していない
 
-[unreleased]: https://github.com/Kotton-MAS/esn-vla-uq/commits/main
+### 既知の制限
+
+- **不確実性は失敗への反応であって予兆ではない。** 立ち上がりは失敗開始の約 15
+  ステップ後で、遅れはチャンク周期 (推論間隔 16 ステップ) で上限が決まる。
+- **openpi 接続 (`OpenpiLogSource`) は未実装。** 実ログが入手できず、フィールドの
+  マッピングを推測で書くことを避けた。アダプタ境界は用意済み。
+- デモの映像パネルは実 LIBERO 映像ではなく合成データによる代替。
+- `normalized` は失敗検知と引き換えに被覆率が名目をやや下回る (0.864 対 0.903)。
+
+[0.1.0]: https://github.com/Kotton-MAS/esn-vla-uq/releases/tag/v0.1.0

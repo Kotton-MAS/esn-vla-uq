@@ -1,0 +1,147 @@
+"""`demo` サブコマンドのハンドラ。"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+from pathlib import Path
+from typing import Final
+
+from esn_vla_uq.data.io import load_bundled_sample, load_dataset
+from esn_vla_uq.demo.animate import (
+    DEFAULT_FPS,
+    DEFAULT_MAX_FRAMES,
+    write_demo_animation,
+)
+from esn_vla_uq.demo.frames import build_demo_frames
+from esn_vla_uq.esn.config import DEFAULT_N_RESERVOIR, ESNConfig
+from esn_vla_uq.logging_paths import display_path
+from esn_vla_uq.uncertainty.conformal import DEFAULT_ALPHA
+from esn_vla_uq.uncertainty.nonconformity import (
+    DEFAULT_SCORE_KIND,
+    SUPPORTED_SCORE_KINDS,
+)
+
+logger = logging.getLogger(__name__)
+
+REPORT_SUBDIR: Final[str] = "demo"
+"""`--output-dir` 配下の書き出し先サブディレクトリ。"""
+
+DEFAULT_FILENAME: Final[str] = "uncertainty_demo.gif"
+"""既定の出力ファイル名。"""
+
+
+def add_demo_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    """`demo` 固有の引数を登録する。"""
+    parser.add_argument(
+        "--input",
+        type=Path,
+        default=None,
+        help="対象の .npz のパス (既定: 同梱の合成サンプルデータ)",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help=(
+            "出力する GIF のパス "
+            f"(既定: <output-dir>/{REPORT_SUBDIR}/{DEFAULT_FILENAME})"
+        ),
+    )
+    parser.add_argument(
+        "--episode-id",
+        type=str,
+        default=None,
+        help=(
+            "描画するエピソード。既定はテスト集合の失敗エピソードのうち "
+            "失敗開始以降の不確実性の上がり方が最大のもの"
+        ),
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=DEFAULT_ALPHA,
+        help="有意水準。名目被覆率は 1 - alpha (既定: %(default)s)",
+    )
+    parser.add_argument(
+        "--score-kind",
+        choices=SUPPORTED_SCORE_KINDS,
+        default=DEFAULT_SCORE_KIND,
+        help=(
+            "非適合度スコア。absolute は区間幅が定数になりバーが跳ねない "
+            "(既定: %(default)s)"
+        ),
+    )
+    parser.add_argument(
+        "--n-reservoir",
+        type=int,
+        default=DEFAULT_N_RESERVOIR,
+        help="リザバーのニューロン数 N (既定: %(default)s)",
+    )
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=DEFAULT_FPS,
+        help="GIF のフレームレート (既定: %(default)s)",
+    )
+    parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=DEFAULT_MAX_FRAMES,
+        help="GIF に含める最大フレーム数 (既定: %(default)s)",
+    )
+    return parser
+
+
+def run_demo(args: argparse.Namespace) -> int:
+    """デモアニメーションを生成する。
+
+    Args:
+        args: `add_demo_arguments` と共通オプションを含む名前空間。
+
+    Returns:
+        終了コード (成功時 0)。
+    """
+    seed = int(args.seed)
+    config = ESNConfig(n_reservoir=int(args.n_reservoir), seed=seed)
+    input_path: Path | None = args.input
+    dataset = load_bundled_sample() if input_path is None else load_dataset(input_path)
+
+    frames = build_demo_frames(
+        dataset,
+        config,
+        alpha=float(args.alpha),
+        score_kind=args.score_kind,
+        split_seed=seed,
+        episode_id=args.episode_id,
+    )
+    output: Path | None = args.output
+    path = (
+        output
+        if output is not None
+        else Path(args.output_dir) / REPORT_SUBDIR / DEFAULT_FILENAME
+    )
+    write_demo_animation(
+        frames, path, fps=int(args.fps), max_frames=int(args.max_frames)
+    )
+
+    ratio = frames.uncertainty_ratio_after_onset()
+    lag = frames.detection_lag_steps()
+    logger.info(
+        "demo done: episode_id=%s task=%s success=%s n_steps=%d "
+        "uncertainty_ratio_after_onset=%s detection_lag_steps=%s output=%s",
+        frames.episode_id,
+        frames.task_name,
+        frames.success,
+        frames.n_steps,
+        "n/a" if ratio is None else f"{ratio:.2f}x",
+        "n/a" if lag is None else str(lag),
+        display_path(path),
+    )
+    if lag is not None:
+        logger.warning(
+            "不確実性の立ち上がりは失敗開始の %d ステップ後です。"
+            "予兆ではなく反応であり、遅れはチャンク周期 (推論間隔) で決まります",
+            lag,
+        )
+    return 0

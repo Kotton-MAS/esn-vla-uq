@@ -9,8 +9,8 @@ type: software
 authors:
   - family-names: Kotooka
     given-names: Takumi
-version: 0.1.0.dev0
-date-released: "2026-08-02"
+version: 0.1.0
+date-released: "2026-08-04"
 license: Apache-2.0
 repository-code: "https://github.com/Kotton-MAS/esn-vla-uq"
 keywords:

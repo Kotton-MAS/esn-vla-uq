@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import re
@@ -9,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from esn_vla_uq.cli import main
+from esn_vla_uq.cli import app, main
 from esn_vla_uq.cli.app import EXIT_ERROR, EXIT_INTERRUPTED, EXIT_OK
 from esn_vla_uq.data.io import save_dataset
 from esn_vla_uq.data.schema import RolloutDataset
@@ -129,10 +130,23 @@ def test_traceback_is_available_at_debug_level(
 def test_keyboard_interrupt_maps_to_conventional_exit_code(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def _interrupt(_args: object) -> int:
+    def _interrupt(_args: argparse.Namespace) -> int:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr("esn_vla_uq.cli.app._run_diagnose", _interrupt)
+    # サブコマンドは `set_defaults(handler=...)` で振り分けるため、テーブル側の
+    # ハンドラを差し替える (A6 でラッパ関数は廃止した)。
+    monkeypatch.setattr(
+        "esn_vla_uq.diagnostics.commands.run_diagnose", _interrupt, raising=True
+    )
+    monkeypatch.setattr(
+        "esn_vla_uq.cli.app.SUBCOMMANDS",
+        tuple(
+            subcommand._replace(handler=_interrupt)
+            if subcommand.name == "diagnose"
+            else subcommand
+            for subcommand in app.SUBCOMMANDS
+        ),
+    )
     exit_code = main(["diagnose", "--output-dir", str(tmp_path)])
     assert exit_code == EXIT_INTERRUPTED
 
