@@ -346,3 +346,15 @@ def test_demo_records_openpi_as_the_data_source(log_dir: Path) -> None:
         OpenpiLogSource(log_dir).load(), ESNConfig(n_reservoir=30, seed=0)
     )
     assert frames.data_source == "openpi"
+
+
+def test_optional_server_metadata_is_accepted(log_dir: Path) -> None:
+    """`server_metadata` があっても読めること (収集スクリプトが書き足す)。"""
+    manifest_path = log_dir / MANIFEST_NAME
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["policy"] = "pi05_libero"
+    manifest["server_metadata"] = {"config": "pi05_libero", "dir": "gs://..."}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    dataset = OpenpiLogSource(log_dir).load()
+    assert dataset.policy == "pi05_libero"

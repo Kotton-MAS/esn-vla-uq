@@ -9,6 +9,17 @@ v0.1.0 が最初のリリースです。
 
 ## [Unreleased]
 
+### Fixed
+
+- **収集ログの `policy` がコマンドラインの既定値をそのまま記録していた。** 実際に
+  配信されていたのは `pi05_libero` (`serve_policy.py --env LIBERO` の既定) だったが、
+  ログには `pi0_libero` と書かれていた。policy server が申告するメタデータから
+  名前を取り、`server_metadata` を加工せず残すようにした。名前が得られない場合は
+  推測せず `"unknown"` を記録する
+- `docs/design.md` の `action_horizon` の記述を再訂正した。`pi0_libero` は 50
+  (`Pi0Config()`)、`pi05_libero` が 10。**一度目の訂正自体が誤っていた**ため、
+  経緯を 10 節に残した
+
 ### Documented
 
 - 実 openpi ロールアウト 100 エピソードでの検証結果を `docs/design.md` 10.6〜10.8 に
