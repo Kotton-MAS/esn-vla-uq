@@ -24,6 +24,11 @@ from esn_vla_uq.uncertainty.nonconformity import (
     SUPPORTED_SCORE_KINDS,
     ScoreKind,
 )
+from esn_vla_uq.uncertainty.split import (
+    DEFAULT_SPLIT_STRATEGY,
+    SUPPORTED_SPLIT_STRATEGIES,
+    SplitStrategy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +84,16 @@ def add_demo_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentPars
         ),
     )
     parser.add_argument(
+        "--split",
+        choices=SUPPORTED_SPLIT_STRATEGIES,
+        default=DEFAULT_SPLIT_STRATEGY,
+        help=(
+            "較正データの分割方針。1 タスク 1 エピソードのデータでは "
+            "within_task が 3 分割できないため across_task が要る "
+            "(既定: %(default)s)"
+        ),
+    )
+    parser.add_argument(
         "--n-reservoir",
         type=int,
         default=DEFAULT_N_RESERVOIR,
@@ -110,6 +125,7 @@ class DemoOptions:
     episode_id: str | None
     alpha: float
     score_kind: ScoreKind
+    split: SplitStrategy
     n_reservoir: int
     fps: int
     max_frames: int
@@ -125,6 +141,7 @@ class DemoOptions:
             episode_id=options.get_optional_str(args, "episode_id"),
             alpha=options.get_float(args, "alpha"),
             score_kind=options.get_choice(args, "score_kind", SUPPORTED_SCORE_KINDS),
+            split=options.get_choice(args, "split", SUPPORTED_SPLIT_STRATEGIES),
             n_reservoir=options.get_int(args, "n_reservoir"),
             fps=options.get_int(args, "fps"),
             max_frames=options.get_int(args, "max_frames"),
@@ -154,6 +171,7 @@ def execute_demo(opts: DemoOptions) -> int:
         config,
         alpha=opts.alpha,
         score_kind=opts.score_kind,
+        split_strategy=opts.split,
         split_seed=seed,
         episode_id=opts.episode_id,
     )

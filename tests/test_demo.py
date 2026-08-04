@@ -128,3 +128,34 @@ def test_cli_demo_writes_a_gif(tmp_path: Path) -> None:
     )
     assert exit_code == 0
     assert (tmp_path / "demo" / "uncertainty_demo.gif").exists()
+
+
+def test_demo_accepts_an_across_task_split(
+    dataset: RolloutDataset, config: ESNConfig
+) -> None:
+    """1 タスク 1 エピソードのデータでは across_task でないと分割できない。
+
+    実 openpi ログ (1 タスク 1 試行 x 10 タスク) がまさにこの形で、`--split` が
+    無いとデモを作れなかった。
+    """
+    frames = build_demo_frames(
+        dataset, config, split_strategy="across_task", split_seed=0
+    )
+    assert frames.n_steps > 0
+
+
+def test_cli_demo_accepts_the_split_option(tmp_path: Path) -> None:
+    exit_code = main(
+        [
+            "demo",
+            "--output-dir",
+            str(tmp_path),
+            "--n-reservoir",
+            str(N_RESERVOIR),
+            "--max-frames",
+            "5",
+            "--split",
+            "across_task",
+        ]
+    )
+    assert exit_code == 0

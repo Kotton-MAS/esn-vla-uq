@@ -337,3 +337,69 @@ def test_stack_helpers_reject_empty_input() -> None:
         stack_targets([])
     with pytest.raises(ValueError, match="1 件以上"):
         stack_failure_labels([])
+
+
+# --- 難易度の有界性 (実データで踏んだ問題への対処) -------------------------
+
+
+def test_difficulty_is_bounded_by_construction(
+    dataset: RolloutDataset, config: ESNConfig
+) -> None:
+    """難易度 `g(x)` の値域が観測量の分布に依存しないこと。
+
+    以前は `g = exp(中心化した log 観測量)` で、値域が観測量のレンジ次第だった。
+    合成データでは log 分散のレンジが約 83 倍で収まっていたが、実 openpi ログでは
+    約 17,000 倍あり、`g` が 528 まで振れて平均区間幅が行動スケールの 1,858 倍に
+    なった。順位へ写すことで値域を構造的に閉じる。
+    """
+    from esn_vla_uq.uncertainty.nonconformity import DIFFICULTY_SPREAD
+
+    split = split_samples(build_samples(dataset), seed=0)
+    predictor = SplitConformalPredictor(config, score_kind="normalized")
+    predictor.fit(split.fit).calibrate(split.calibrate)
+
+    states, inputs, _targets = predictor._design(split.test)
+    score_model = predictor._score_model
+    assert score_model is not None
+    difficulty = score_model.difficulty(states, inputs)
+    assert float(difficulty.min()) >= DIFFICULTY_SPREAD**-0.5 - 1e-12
+    assert float(difficulty.max()) <= DIFFICULTY_SPREAD**0.5 + 1e-12
+
+
+def test_detection_auroc_is_invariant_to_the_difficulty_spread(
+    dataset: RolloutDataset, config: ESNConfig
+) -> None:
+    """`spread` を変えても失敗検知 AUROC が変わらないこと。
+
+    順位への写像は単調変換であり、AUROC は順位だけで決まる。したがって幅の
+    値域をどう選んでも検知性能は 1 ビットも変わらない。**この性質があるから
+    こそ、spread は被覆率だけを見て決めてよい。**
+    """
+    from esn_vla_uq.calibration.metrics import detection_auroc
+    from esn_vla_uq.uncertainty.nonconformity import fit_score_model
+    from esn_vla_uq.uncertainty.targets import detection_labels
+
+    split = split_samples(build_samples(dataset), seed=0)
+    labels, _kind = detection_labels(split.test)
+
+    scores = []
+    for spread in (2.0, 8.0):
+        predictor = SplitConformalPredictor(config, score_kind="normalized")
+        predictor.fit(split.fit)
+        states, inputs, targets = predictor._design(split.fit)
+        readout = predictor._readout
+        assert readout is not None
+        residuals = targets - readout.predict(states, inputs)
+        predictor._score_model = fit_score_model(
+            "normalized",
+            residuals,
+            states,
+            inputs,
+            difficulty_column=split.fit[0].difficulty_column,
+            spread=spread,
+        )
+        predictor.calibrate(split.calibrate)
+        intervals = predictor.predict_intervals(split.test)
+        scores.append(detection_auroc(intervals.uncertainty, labels))
+
+    assert scores[0] == pytest.approx(scores[1], abs=1e-12)
