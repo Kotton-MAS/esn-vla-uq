@@ -9,6 +9,23 @@ v0.1.0 が最初のリリースです。
 
 ## [Unreleased]
 
+### Added
+
+- **openpi 接続** (`data/sources/openpi.py` の `OpenpiLogSource`): 収集済みの
+  LIBERO ロールアウトログを読んで `RolloutDataset` へ変換する。openpi も
+  policy server も import しない
+- **ロールアウト収集スクリプト** (`scripts/collect_openpi_rollouts.py`): openpi の
+  評価ループをなぞって state / action / action_chunk を記録する。openpi の評価
+  スクリプトはロールアウトを保存しない (replay 動画だけを書く) ため必要
+
+### Fixed
+
+- **`state` 8 次元の意味の記述が誤っていた。** 「7 関節 + グリッパ」ではなく
+  「エンドエフェクタ位置 3 + 姿勢 (軸角) 3 + グリッパ 2」。openpi の実装を読んで
+  訂正した (次元数は合っていたため見落としやすい)
+- `chunk_horizon` の扱いを明確にした。openpi の pi0 は 50 (推論間隔 5)、同梱の
+  合成データは 16。`RolloutDataset` がフィールドで持つため同じスキーマで共存する
+
 ### Changed
 
 - CLI ハンドラの引数を型付きの設定オブジェクトへ変換するようにした (A7)。
