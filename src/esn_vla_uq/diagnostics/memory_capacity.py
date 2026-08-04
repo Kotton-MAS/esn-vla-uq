@@ -36,6 +36,12 @@ from esn_vla_uq.esn.reservoir import Reservoir
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MC_SEED: Final[int] = 0
+"""入力系列を生成する既定シード。
+
+同モジュールの他の既定値が `Final` 定数になっているのに合わせる (C2)。
+"""
+
 MEMORY_CAPACITY_INPUT_DIM: Final[int] = 1
 """メモリ容量診断はスカラー入力 (``D_u = 1``) で行う。"""
 
@@ -169,7 +175,7 @@ def linear_memory_capacity(
     washout: int = DEFAULT_MC_WASHOUT,
     max_delay: int | None = None,
     ridge_alpha: float = DEFAULT_MC_RIDGE_ALPHA,
-    seed: int = 0,
+    seed: int = DEFAULT_MC_SEED,
 ) -> MemoryCapacityResult:
     """線形メモリ容量を測定する。
 

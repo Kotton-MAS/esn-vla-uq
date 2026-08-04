@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from esn_vla_uq.calibration.metrics import ReliabilityCurve
@@ -21,6 +22,7 @@ from esn_vla_uq.calibration.report import (
     write_report,
 )
 from esn_vla_uq.calibration.runner import DEFAULT_N_SPLITS, run_calibration
+from esn_vla_uq.cli import options
 from esn_vla_uq.data.io import load_bundled_sample, load_dataset
 from esn_vla_uq.esn.config import (
     DEFAULT_LEAK_RATE,
@@ -33,10 +35,12 @@ from esn_vla_uq.uncertainty.conformal import DEFAULT_ALPHA
 from esn_vla_uq.uncertainty.nonconformity import (
     DEFAULT_SCORE_KIND,
     SUPPORTED_SCORE_KINDS,
+    ScoreKind,
 )
 from esn_vla_uq.uncertainty.split import (
     DEFAULT_SPLIT_STRATEGY,
     SUPPORTED_SPLIT_STRATEGIES,
+    SplitStrategy,
 )
 
 logger = logging.getLogger(__name__)
@@ -114,7 +118,46 @@ def add_calibrate_arguments(
     return parser
 
 
+@dataclass(frozen=True)
+class CalibrateOptions:
+    """`calibrate` の型付き設定 (A7)。"""
+
+    seed: int
+    output_dir: Path
+    input: Path | None
+    alpha: float
+    score_kind: ScoreKind
+    split: SplitStrategy
+    n_reservoir: int
+    spectral_radius: float
+    leak_rate: float
+    n_splits: int
+    diagram: bool
+
+    @classmethod
+    def from_namespace(cls, args: argparse.Namespace) -> CalibrateOptions:
+        """`Namespace` から型を検証しつつ取り出す。"""
+        return cls(
+            seed=options.get_int(args, "seed"),
+            output_dir=options.get_path(args, "output_dir"),
+            input=options.get_optional_path(args, "input"),
+            alpha=options.get_float(args, "alpha"),
+            score_kind=options.get_choice(args, "score_kind", SUPPORTED_SCORE_KINDS),
+            split=options.get_choice(args, "split", SUPPORTED_SPLIT_STRATEGIES),
+            n_reservoir=options.get_int(args, "n_reservoir"),
+            spectral_radius=options.get_float(args, "spectral_radius"),
+            leak_rate=options.get_float(args, "leak_rate"),
+            n_splits=options.get_int(args, "n_splits"),
+            diagram=options.get_bool(args, "diagram"),
+        )
+
+
 def run_calibrate(args: argparse.Namespace) -> int:
+    """`calibrate` を実行する (`Namespace` の解釈のみを担う)。"""
+    return execute_calibrate(CalibrateOptions.from_namespace(args))
+
+
+def execute_calibrate(opts: CalibrateOptions) -> int:
     """較正評価を実行してレポートを書き出す。
 
     Args:
@@ -123,30 +166,30 @@ def run_calibrate(args: argparse.Namespace) -> int:
     Returns:
         終了コード (成功時 0)。
     """
-    seed = int(args.seed)
+    seed = opts.seed
     config = ESNConfig(
-        n_reservoir=int(args.n_reservoir),
-        spectral_radius=float(args.spectral_radius),
-        leak_rate=float(args.leak_rate),
+        n_reservoir=opts.n_reservoir,
+        spectral_radius=opts.spectral_radius,
+        leak_rate=opts.leak_rate,
         seed=seed,
     )
-    input_path: Path | None = args.input
+    input_path = opts.input
     dataset = load_bundled_sample() if input_path is None else load_dataset(input_path)
 
     report = run_calibration(
         dataset,
         config,
-        alpha=float(args.alpha),
-        score_kind=args.score_kind,
-        split_strategy=args.split,
+        alpha=opts.alpha,
+        score_kind=opts.score_kind,
+        split_strategy=opts.split,
         split_seed=seed,
-        n_splits=int(args.n_splits),
+        n_splits=opts.n_splits,
     )
     report.log_summary()
-    path = write_report(report, Path(args.output_dir))
+    path = write_report(report, opts.output_dir)
 
-    if args.diagram:
-        _write_diagram(report.reliability, Path(args.output_dir), report.data_source)
+    if opts.diagram:
+        _write_diagram(report.reliability, opts.output_dir, report.data_source)
 
     logger.info(
         "calibrate done: score_kind=%s split=%s coverage=%.4f±%.4f "

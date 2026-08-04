@@ -66,7 +66,7 @@ from numpy.typing import NDArray
 ScoreKind = Literal["absolute", "normalized"]
 """非適合度スコアの種類。"""
 
-SUPPORTED_SCORE_KINDS: Final[tuple[str, ...]] = get_args(ScoreKind)
+SUPPORTED_SCORE_KINDS: Final[tuple[ScoreKind, ...]] = get_args(ScoreKind)
 """`ScoreKind` が許可する値の実行時タプル。"""
 
 DEFAULT_SCORE_KIND: Final[ScoreKind] = "normalized"

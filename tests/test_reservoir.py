@@ -329,3 +329,19 @@ def test_reservoir_matches_golden_values_end_to_end(golden_config: ESNConfig) ->
     assert np.array_equal(reservoir.W_in, _GOLDEN_W_IN)
     assert np.array_equal(reservoir.b, _GOLDEN_B)
     assert np.array_equal(reservoir.W, _GOLDEN_W)
+
+
+def test_zero_input_scaling_makes_the_reservoir_ignore_its_input() -> None:
+    """`input_scaling=0.0` は入力を無視するリザバーになる (T1)。
+
+    `docs/design.md` 3.2 節がこの挙動を保証しているのにテストが無かった。
+    `W_in` が恒等的に 0 になるため、どんな入力でも同じ状態列が出る。
+    """
+    config = ESNConfig(n_reservoir=20, input_scaling=0.0, bias_scaling=0.1, seed=0)
+    reservoir = Reservoir(config, n_inputs=3)
+    assert not reservoir.W_in.any()
+
+    rng = np.random.default_rng(0)
+    first = reservoir.run(rng.normal(size=(15, 3)))
+    second = reservoir.run(rng.normal(size=(15, 3)) * 100.0)
+    np.testing.assert_allclose(first, second)

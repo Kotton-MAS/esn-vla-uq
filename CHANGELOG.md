@@ -7,6 +7,29 @@
 
 v0.1.0 が最初のリリースです。
 
+## [Unreleased]
+
+### Changed
+
+- CLI ハンドラの引数を型付きの設定オブジェクトへ変換するようにした (A7)。
+  `argparse.Namespace` の無型アクセスを各サブコマンドの `from_namespace` 1 箇所に
+  閉じ込め、ハンドラ本体を mypy strict の検査対象にした
+- `esn` 層の公開 API (`ESN.fit/predict/transform`、`RidgeReadout`) に
+  Args/Returns/Raises を書いた。利用者が最初に触る層だが diagnostics 層より
+  記述が薄かった (D1)
+- Dev Container の `uv sync` を `--locked` にした。初回起動で uv.lock が
+  書き換わると `make ci` 先頭の `uv lock --check` が落ちる (U4)
+
+### Performance
+
+- `diagnose` が実効更新行列の固有値を 2 度求めていたのを 1 度にした (P2)。
+  N=500 で 0.615 秒から 0.493 秒 (20% 短縮)。報告される値は変わらない
+
+### Added
+
+- テストの穴を 2 件埋めた: `input_scaling=0.0` が入力を無視すること (T1)、
+  `ESN.fit` 経由の `washout=0` が全ステップを使うこと (T2)
+
 ## [0.1.0] - 2026-08-04
 
 ### Added
@@ -101,3 +124,4 @@ v0.1.0 が最初のリリースです。
 - `normalized` は失敗検知と引き換えに被覆率が名目をやや下回る (0.864 対 0.903)。
 
 [0.1.0]: https://github.com/Kotton-MAS/esn-vla-uq/releases/tag/v0.1.0
+[unreleased]: https://github.com/Kotton-MAS/esn-vla-uq/compare/v0.1.0...main

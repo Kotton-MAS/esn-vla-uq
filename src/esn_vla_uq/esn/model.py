@@ -59,7 +59,28 @@ class ESN:
         return self._readout
 
     def transform(self, inputs: NDArray[np.float64]) -> NDArray[np.float64]:
-        """入力系列 `[T, n_inputs]` からリザバー状態行列 `[T, N]` を得る。"""
+        """入力系列からリザバー状態行列を得る (read-out を経由しない)。
+
+        washout は適用しない。診断モジュールや `uncertainty` 層が生の状態を
+        必要とするための入口である。
+
+        **エピソード境界を跨ぐ系列をそのまま渡してはならない。** 状態は系列の
+        先頭から連続に発展するため、独立した試行を連結して渡すと前の試行の
+        末尾状態が次へ持ち越される。複数エピソードを扱う場合は
+        `esn.reservoir.run_episodes` を使う (`docs/design.md` 3.9 節)。
+
+        Args:
+            inputs: 入力系列 `[T, n_inputs]`。初回呼び出し時の第 2 軸が
+                リザバーの入力次元を決め、以降はそれと一致する必要がある。
+
+        Returns:
+            状態行列 `[T, N]` (`N = config.n_reservoir`)。各行が時刻 t の
+            `x[t]` で、初期状態 `x[-1]`(零ベクトル) は含まない。
+
+        Raises:
+            ValueError: `inputs` が 2 次元でない、または入力次元が初回と
+                食い違う場合。
+        """
         u = np.asarray(inputs, dtype=np.float64)
         if u.ndim != 2:
             raise ValueError(
@@ -69,7 +90,26 @@ class ESN:
         return reservoir.run(u)
 
     def fit(self, inputs: NDArray[np.float64], targets: NDArray[np.float64]) -> ESN:
-        """入力・目標系列から read-out を学習して `self` を返す。"""
+        """入力・目標系列からリッジ read-out を学習する。
+
+        リザバーは学習しない。閉形式のリッジ解で線形 read-out だけを解く
+        (勾配法もアンサンブルも使わない)。教師強制 (teacher forcing) は行わない。
+
+        先頭 `config.washout` ステップは学習から除く。リザバーの初期過渡が
+        read-out の解を歪めるためである。`washout=0` を指定すれば除かない。
+
+        Args:
+            inputs: 入力系列 `[T, n_inputs]`。
+            targets: 目標系列 `[T, n_outputs]`。1 次元 `[T]` も受け付け、その
+                場合は `predict` も `[T]` を返す。
+
+        Returns:
+            自分自身 (メソッドチェーン用)。
+
+        Raises:
+            ValueError: `inputs` が 2 次元でない、`inputs` と `targets` の
+                系列長が違う、または `washout` が系列長以上の場合。
+        """
         u = np.asarray(inputs, dtype=np.float64)
         y, self._targets_were_1d = _as_2d_targets(targets)
         if u.ndim != 2:
@@ -99,10 +139,23 @@ class ESN:
         return self
 
     def predict(self, inputs: NDArray[np.float64]) -> NDArray[np.float64]:
-        """学習済み read-out で `[T, n_outputs]` を予測する。
+        """学習済み read-out で予測する。
 
-        `fit` に 1 次元の `targets` を渡していた場合は `[T]` を返す。
-        未 fit の場合は `RuntimeError`。
+        `transform` と同じくエピソード境界を跨ぐ系列をそのまま渡してはならない
+        (`docs/design.md` 3.9 節)。
+
+        Args:
+            inputs: 入力系列 `[T, n_inputs]`。入力次元は `fit` 時と一致する
+                必要がある。
+
+        Returns:
+            予測 `[T, n_outputs]`。`fit` に 1 次元の `targets` を渡していた
+            場合は `[T]`。
+
+        Raises:
+            RuntimeError: `fit` を呼ぶ前に呼んだ場合。
+            ValueError: `inputs` が 2 次元でない、または入力次元が `fit` 時と
+                食い違う場合。
         """
         if not self._readout.is_fitted:
             raise RuntimeError(

@@ -37,6 +37,12 @@ from esn_vla_uq.esn.reservoir import Reservoir
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_ESP_SEED: Final[int] = 0
+"""テスト入力と初期状態の既定シード。
+
+同モジュールの他の既定値が `Final` 定数になっているのに合わせる (C2)。
+"""
+
 DEFAULT_ESP_N_STEPS: Final[int] = 500
 """既定のテスト系列長 T (`docs/design.md` 4.2 節)。"""
 
@@ -176,7 +182,8 @@ def check_esp(
     n_steps: int = DEFAULT_ESP_N_STEPS,
     n_initial_states: int = DEFAULT_ESP_N_INITIAL_STATES,
     tol: float = DEFAULT_ESP_TOL,
-    seed: int = 0,
+    seed: int = DEFAULT_ESP_SEED,
+    effective_spectral_radius: float | None = None,
 ) -> EspResult:
     """ESP の 3 指標を計算して `EspResult` を返す。
 
@@ -189,6 +196,11 @@ def check_esp(
         n_initial_states: ランダム初期状態の個数 K (2 以上)。
         tol: 経験的収束の判定閾値。
         seed: テスト入力と初期状態を生成する `np.random.default_rng` の種。
+        effective_spectral_radius: ``rho(A)`` を外から渡す (P2)。省略時はここで
+            計算する。`diagnostics/runner.py` は同じ ``A`` のスペクトル半径を
+            `summarize_spectral` でも使うため、渡して O(N^3) の固有値計算の
+            重複を避ける。**値の意味は変わらない**ので、単独で呼ぶときは省略
+            してよい。
 
     Returns:
         3 指標と `verdict` を併記した `EspResult`。
@@ -214,7 +226,11 @@ def check_esp(
     leak_rate = reservoir.config.leak_rate
     update_matrix = effective_update_matrix(reservoir.W, leak_rate)
     sigma_max = largest_singular_value(update_matrix)
-    rho = spectral_radius(update_matrix)
+    rho = (
+        spectral_radius(update_matrix)
+        if effective_spectral_radius is None
+        else effective_spectral_radius
+    )
 
     initial_states = rng.uniform(
         -1.0, 1.0, size=(n_initial_states, reservoir.n_reservoir)
