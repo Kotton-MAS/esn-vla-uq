@@ -99,10 +99,11 @@ the sufficient condition, which is normal and why all three are printed.
 
 ## Not implemented yet
 
-- **openpi connection.** `OpenpiLogSource` is not written. Real logs were not available,
-  and guessing the field mapping would produce code nobody has verified. The adapter
-  boundary (`data/sources/`, `data/invariants.py`) is in place so it can be added
-  without touching existing code.
+- **openpi rollouts have not actually been collected.** `OpenpiLogSource` and the
+  collection script exist and were written against openpi's real implementation, but
+  no run against a live policy server has been done — that needs a GPU and a LIBERO
+  setup. Tests use fixtures shaped like real openpi output (`chunk_horizon=50`,
+  replan every 5 steps).
 - Real LIBERO footage in the demo (the video panel is a synthetic stand-in).
 - VLM feature injection (deferred to v0.2 by the requirements).
 

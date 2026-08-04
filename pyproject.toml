@@ -113,3 +113,9 @@ disallow_any_explicit = true
 # src レイアウト: mypy がインストール済みパッケージではなく src/ の実体を解決する
 mypy_path = ["src"]
 exclude = ["\\.venv"]
+
+# 収集スクリプト (scripts/collect_openpi_rollouts.py) だけが使う外部依存。
+# パッケージ本体は依存しないため、この環境にはインストールされていない。
+[[tool.mypy.overrides]]
+module = ["libero.*", "openpi_client.*"]
+ignore_missing_imports = true

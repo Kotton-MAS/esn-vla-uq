@@ -7,10 +7,20 @@
 
 配列レイアウト (T = ステップ数):
 
-- `state`: `float32[T, 8]` — 7 関節 + グリッパ
+- `state`: `float32[T, 8]` — エンドエフェクタ位置 3 + 姿勢 (軸角) 3 + グリッパ 2
 - `action`: `float32[T, 7]` — 6 DoF デルタ + グリッパ
-- `action_chunk`: `float32[T, 16, 7]` — 推論ステップのみ有効。非推論ステップは NaN
+- `action_chunk`: `float32[T, H, 7]` — 推論ステップのみ有効。非推論ステップは NaN
 - `is_inference_step`: `bool[T]` — 行動チャンクを推論したステップ
+
+次元の意味は openpi の LIBERO 評価ループ (`examples/libero/main.py`) を読んで確定
+させた。`state` は `robot0_eef_pos` (3) + `_quat2axisangle(robot0_eef_quat)` (3) +
+`robot0_gripper_qpos` (2) の連結である。**「7 関節 + グリッパ」ではない**
+(`docs/design.md` 8 節の未解決論点 2 を解消した際の訂正)。
+
+`H` (`chunk_horizon`) はデータセットごとに異なる。同梱の合成データは 16、
+openpi の pi0 は 50 (`action_horizon`) を返し、そのうち先頭 5 ステップだけを
+実行して再計画する (`replan_steps`)。`RolloutDataset` は `chunk_horizon` を
+フィールドとして持つため、両者は同じスキーマで共存できる。
 """
 
 from __future__ import annotations
@@ -32,13 +42,22 @@ SUPPORTED_SCHEMA_VERSIONS: Final[tuple[str, ...]] = (SCHEMA_VERSION,)
 """読み込みを許可するスキーマバージョン。"""
 
 STATE_DIM: Final[int] = 8
-"""状態次元 (7 関節 + グリッパ)。"""
+"""状態次元。
+
+内訳はエンドエフェクタ位置 3 + 姿勢 (軸角表現) 3 + グリッパ関節 2。
+openpi の LIBERO 評価ループが `observation/state` として組み立てる並びに一致する。
+"""
 
 ACTION_DIM: Final[int] = 7
 """行動次元 (6 DoF デルタ + グリッパ)。"""
 
 CHUNK_HORIZON: Final[int] = 16
-"""行動チャンクの予測ホライズン H。"""
+"""行動チャンクの予測ホライズン H (合成データの既定値)。
+
+openpi の pi0 は `action_horizon = 50` を返す。データセットごとの実値は
+`RolloutDataset.chunk_horizon` が持つので、この定数は合成データの既定値に
+すぎない。
+"""
 
 MAX_STATE_DIM: Final[int] = 1024
 """`state_dim` の上限。
