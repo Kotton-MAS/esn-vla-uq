@@ -299,3 +299,40 @@ def test_cli_across_task_split_records_the_warning(tmp_path: Path) -> None:
         next((tmp_path / REPORT_SUBDIR).glob("*.json")).read_text(encoding="utf-8")
     )
     assert any("交換可能性" in caveat for caveat in payload["caveats"])
+
+
+def test_inverted_detection_is_reported_as_a_finding(
+    dataset: RolloutDataset,
+) -> None:
+    """AUROC が 0.5 を下回ったら「向きが逆」だと明示すること。
+
+    実 openpi ログでは 0.374 になる。黙って数値だけ出すと「効いていない」と
+    読まれるが、実際には**逆向きに効いている**。不具合ではなく結果なので、
+    読み手が誤解しないよう注意書きを付ける (docs/design.md 10.11 節)。
+    """
+    from esn_vla_uq.calibration.runner import (
+        INVERTED_DETECTION_CAVEAT,
+        INVERTED_DETECTION_THRESHOLD,
+        _caveats,
+    )
+
+    inverted = _caveats(None, "normalized", "episode_success", "openpi", 0.374)
+    assert INVERTED_DETECTION_CAVEAT in inverted
+
+    healthy = _caveats(None, "normalized", "failure_onset", "synthetic", 0.87)
+    assert INVERTED_DETECTION_CAVEAT not in healthy
+
+    # 閾値のすぐ上は「偶然の揺らぎ」として扱い、注意書きを出さない。
+    borderline = _caveats(
+        None, "normalized", "episode_success", "openpi", INVERTED_DETECTION_THRESHOLD
+    )
+    assert INVERTED_DETECTION_CAVEAT not in borderline
+
+
+def test_synthetic_report_does_not_claim_inverted_detection(
+    report: CalibrationReport,
+) -> None:
+    """合成データ (AUROC 0.87) では反相関の注意書きが出ないこと。"""
+    from esn_vla_uq.calibration.runner import INVERTED_DETECTION_CAVEAT
+
+    assert INVERTED_DETECTION_CAVEAT not in report.caveats

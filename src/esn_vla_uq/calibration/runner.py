@@ -81,6 +81,28 @@ EPISODE_LABEL_CAVEAT: Final[str] = (
 )
 """粗いラベルを使ったときの注意。"""
 
+INVERTED_DETECTION_THRESHOLD: Final[float] = 0.45
+"""この値を下回ったら「不確実性が失敗と反相関している」とみなす閾値。
+
+0.5 ちょうどではなく余裕を持たせる。分割間のばらつき (実測で標準偏差 0.07〜0.09)
+があるため、0.5 のわずか下を反相関と呼ぶと偶然を拾う。
+"""
+
+INVERTED_DETECTION_CAVEAT: Final[str] = (
+    "失敗検知 AUROC が 0.5 を下回っている。**不確実性が高いステップほど成功して"
+    "いる**ことを意味し、信号が無いのではなく向きが逆である。実 openpi ログでは"
+    "タイムアウト型の失敗 (ポリシーが動けなくなり同じ行動を繰り返す) で"
+    "チャンク分散が下がるため、この向きになる (docs/design.md 10.11 節)。"
+    "符号を反転すれば検知に使えるが、失敗様式によって向きが変わる可能性があるため"
+    "自動では反転しない。"
+)
+"""AUROC が 0.5 を下回ったときの注意。
+
+**これは不具合ではなく結果である。** 黙って 0.4 という数値だけを出すと「効いて
+いない」と読まれるが、実際には「逆向きに効いている」。読み手が誤解しないよう
+明示する。
+"""
+
 ABSOLUTE_SCORE_CAVEAT: Final[str] = (
     "score_kind=absolute の予測区間は全ステップで同じ幅になるため、"
     "不確実性スコアはステップを区別しない (失敗検知 AUROC は定義上 0.5)。"
@@ -247,7 +269,13 @@ def run_calibration(
         coverage=coverage,
         reliability=curve,
         detection=detection,
-        caveats=_caveats(first.warning, score_kind, first.label_kind, dataset.source),
+        caveats=_caveats(
+            first.warning,
+            score_kind,
+            first.label_kind,
+            dataset.source,
+            detection.mean_auroc,
+        ),
         data_source=dataset.source,
     )
 
@@ -304,6 +332,7 @@ def _caveats(
     score_kind: ScoreKind,
     label_kind: str,
     data_source: DataSource,
+    mean_auroc: float | None,
 ) -> tuple[str, ...]:
     """レポートに載せる注意書きを組み立てる。"""
     caveats = [EFFECTIVE_SAMPLE_SIZE_CAVEAT]
@@ -315,4 +344,6 @@ def _caveats(
         caveats.append(split_warning)
     if score_kind == "absolute":
         caveats.append(ABSOLUTE_SCORE_CAVEAT)
+    elif mean_auroc is not None and mean_auroc < INVERTED_DETECTION_THRESHOLD:
+        caveats.append(INVERTED_DETECTION_CAVEAT)
     return tuple(caveats)
