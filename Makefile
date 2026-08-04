@@ -1,4 +1,4 @@
-.PHONY: sync test cov lint fmt fmt-check type lock-check src-not-ignored ci pre-commit clean help
+.PHONY: sync test cov lint fmt fmt-check type lock-check src-not-ignored audit secrets version-consistency ci pre-commit clean help
 
 help:
 	@echo "Available targets:"
@@ -9,7 +9,9 @@ help:
 	@echo "  fmt          - Run ruff format (modifies files)"
 	@echo "  fmt-check    - Check formatting without modifying"
 	@echo "  type         - Run mypy"
-	@echo "  ci           - Full CI check: lock + gitignore guard + lint + fmt + type + test"
+	@echo "  audit        - Scan dependencies for known vulnerabilities (pip-audit)"
+	@echo "  secrets      - Scan the repository for hardcoded secrets (gitleaks)"
+	@echo "  ci           - Full CI check (see the 'ci' target for the exact list)"
 	@echo "  pre-commit   - Run pre-commit on all files"
 	@echo "  clean        - Remove caches and build artifacts"
 
@@ -57,9 +59,39 @@ src-not-ignored:
 		exit 1; \
 	fi
 
+# 依存の既知脆弱性を検出する。dev グループにしか脆弱性が無くても配布物
+# (numpy のみ) と切り分けて判断できるよう、まず機械的に検出する (S9)。
+# 推移的依存の修正版は pyproject.toml の `[tool.uv] constraint-dependencies` で
+# 引き上げる。
+#
+# `test` と同じ理由で PYTHONPATH を空にする。ROS など外部の site-packages が
+# PYTHONPATH に載っていると、pip-audit がそれらまで監査対象に含めてしまい、
+# 本プロジェクトと無関係な数百件の "not found on PyPI" が出て結果が読めなくなる。
+audit:
+	PYTHONPATH= uv run pip-audit
+
+# ハードコードされたシークレットを検出する (S8)。
+# pre-commit の detect-private-key は PEM 形式の秘密鍵しか見ず、`.gitignore` は
+# `git add -f` で無効化できる。除外パターンの網羅性だけに依存しないため、
+# pre-commit のインストール有無によらず CI から必ず走らせる。
+secrets:
+	uv run pre-commit run gitleaks --all-files
+
+# CITATION.cff と pyproject.toml のバージョンは手動の二重管理であり、
+# リリース時に片方だけ更新される drift が起きる (U3)。
+version-consistency:
+	@pyproject=$$(grep -m1 '^version = ' pyproject.toml | sed 's/.*"\(.*\)".*/\1/'); \
+	citation=$$(grep -m1 '^version: ' CITATION.cff | sed 's/^version: *//;s/^"\(.*\)"$$/\1/'); \
+	if [ "$$pyproject" != "$$citation" ]; then \
+		echo "ERROR: バージョンが一致しません"; \
+		echo "  pyproject.toml: $$pyproject"; \
+		echo "  CITATION.cff:   $$citation"; \
+		exit 1; \
+	fi
+
 # Stop hook (verify-ci.sh) と GitHub Actions が両方これを呼ぶ。
 # ここを単一の真実とすることで、ローカルと CI の検証ロジック乖離を防ぐ。
-ci: lock-check src-not-ignored lint fmt-check type test
+ci: lock-check src-not-ignored version-consistency secrets audit lint fmt-check type test
 
 pre-commit:
 	uv run pre-commit run --all-files

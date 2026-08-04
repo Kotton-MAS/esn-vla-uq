@@ -8,6 +8,8 @@ HIGH 12 件は Phase 4 で修正済み。以下は次スプリント以降の候
 `#` 列の ID は追跡用に固定する。解決済みの項目は行ごと削除し、ID の欠番は詰めない。
 欠番の内訳: S1・S6 は Sprint 1 で解決。A1・A2・A4・A5・A8・S7 は
 「Sprint 2 着手前」の一括対応で解決（`refactor/sprint2-prep-a1-a8`）。
+S2・S3・S4・S5・S8・S9・U1・U2・U3・D2 は公開前対応で解決
+（`chore/pre-release-hardening`）。
 
 **この文書は公開リポジトリに含まれる。** 非公開情報（第三者の実名、社内でのみ通用する
 呼称など）や、その検出パターンをここに書かないこと。書いた時点で除去の意味がなくなる。
@@ -21,24 +23,10 @@ HIGH 12 件は Phase 4 で修正済み。以下は次スプリント以降の候
 | A7  | `*/commands.py` | ハンドラ引数が無型の `argparse.Namespace`。mypy strict でもここだけ型検査が効かず、ノートブックや uncertainty 層から呼ぶとき Namespace を偽装する羽目になる。型付き関数に切り出す                                                                                                                                  |
 | A9  | Phase 1 準備    | `check_esp` / `linear_memory_capacity` の引数を最小 Protocol（`ReservoirLike`）に置き換えると物理リザバー移植時の差し替え点になる。実装が 1 つのうちは前倒ししない                                                                                                                                                 |
 
-## セキュリティ（公開前に対応）
-
-| #   | 対象         | 内容                                                                                                                                                                                                                                                    |
-| --- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| S2  | `data/io.py` | `save_dataset` が `.npz` だけでなくサイドカー `.json` まで無警告上書き。`--output notes.npz` が既存の無関係な `notes.json` を破壊する（CWE-73）。`overwrite: bool = False` + CLI `--force`                                                              |
-| S3  | `cli/app.py` | `main()` に例外ハンドリングが無く、トレースバック（絶対パス・ユーザー名を含む）が stderr に出る。CLAUDE.md「エラーレスポンスにスタックトレースを含めない」に反する。公開後は issue への貼り付けで環境情報が漏れる（CWE-209）                            |
-| S4  | ログ全般     | 書き出し先の**絶対パス**を INFO ログに出している（`data/io.py`, `diagnostics/report.py`, `*/commands.py`）。ユーザー名が残る。INFO では相対パス、絶対パスは DEBUG へ                                                                                    |
-| S5  | `LICENSE`    | Apache-2.0 付録の `Copyright [yyyy] [name of copyright owner]` が未記入。権利帰属が不明確                                                                                                                                                               |
-| S8  | pre-commit   | 秘密情報の防御が `detect-private-key`（PEM のみ）だけで、しかも pre-commit は `make ci` に含まれない。`.gitignore` は `git add -f` で無力化されるため、`gitleaks` を pre-commit に追加し `make ci` からも走らせて `.gitignore` の網羅性への依存を下げる |
-| S9  | dev 依存     | `pip-audit` が既知脆弱性 2 件を報告: pygments 2.19.2 (PYSEC-2026-2987, fix 2.20.0) / pytest 9.0.2 (PYSEC-2026-1845, fix 9.0.3)。dev グループのみで本番配布物（numpy のみ）には入らない。`make ci` に pip-audit を追加して自動検出させる                 |
-
 ## パッケージング / uv
 
 | #   | 対象                                 | 内容                                                                                                                                                                                                                  |
 | --- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| U1  | `pyproject.toml`                     | `[tool.hatch.build.targets.sdist]` が未定義。sdist に `.claude/`, `.devcontainer/`, `.github/`, `.vscode/`, `CLAUDE.md`, `docs/`（7000行）が同梱されている                                                            |
-| U2  | `pyproject.toml`                     | OSS 公開想定なのに `classifiers` / `keywords` が無い。CITATION.cff には keywords があるのに pyproject に無く PyPI の検索性が落ちる                                                                                    |
-| U3  | `CITATION.cff`                       | `version` が pyproject と手動二重管理。リリース時に片方だけ更新される drift。`make ci` に整合チェックを足す                                                                                                           |
 | U4  | `.devcontainer/postCreateCommand.sh` | `uv sync`（ロック非固定）が Makefile の `uv sync --locked` と食い違う。Sprint 1 で editable package になったため、Dev Container 初回起動で uv.lock が無自覚に書き換わると `make ci` 先頭の `uv lock --check` が落ちる |
 
 ## パフォーマンス（実測済み。現状 60 秒要件に対し 0.35〜0.99s で余裕あり）
@@ -73,5 +61,4 @@ HIGH 12 件は Phase 4 で修正済み。以下は次スプリント以降の候
 | #   | 対象                             | 内容                                                                                                                                                                                            |
 | --- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | D1  | `esn/model.py`, `esn/readout.py` | 公開 API（`ESN.fit/predict/transform`, `RidgeReadout.fit/predict/design_matrix`）が一行 docstring のみ。diagnostics 層は Args/Returns/Raises 完備なので不整合。**利用者が最初に触る層こそ必要** |
-| D2  | `CHANGELOG.md`                   | 未作成。v0.1.0 タグ付け（Sprint 3）までに Keep a Changelog 形式で整備                                                                                                                           |
 | D3  | コミットメッセージ               | 「何を」の列挙が中心で「なぜ」が薄い。`Ref: docs/plans/sprint1_v0.1.md T4` のような設計文書への参照を入れる                                                                                     |

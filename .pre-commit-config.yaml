@@ -76,3 +76,20 @@ repos:
     rev: 0.9.1
     hooks:
       - id: nbstripout
+
+  # secret scanning
+  # detect-private-key は PEM 形式の秘密鍵しか見ない。API キー・トークン類は
+  # 素通りする上、.gitignore は `git add -f` で無効化できるため、除外パターンの
+  # 網羅性だけに依存しない検出をここに置く (S8)。
+  # `make ci` の `secrets` ターゲットからも同じフックを呼ぶ (pre-commit は
+  # インストールされていないと動かないため、CI 側で別途走らせる)。
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+        # 既定の entry は `gitleaks git --pre-commit --staged` で、**ステージ済み
+        # 差分しか見ない**。CI (`make secrets`) はクリーンな checkout で走るため
+        # ステージ済み差分が空になり、何も検査しないまま必ず成功してしまう。
+        # 作業ツリー全体を走査する `dir` モードに置き換える (実測: 検出を確認済み)。
+        entry: gitleaks dir . --redact --no-banner
+        pass_filenames: false

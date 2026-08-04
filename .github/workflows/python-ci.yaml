@@ -25,6 +25,18 @@ jobs:
       - name: Install the project
         run: uv sync --locked --all-extras --dev
 
+      # `make secrets` は pre-commit 経由で gitleaks を呼ぶ。pre-commit は
+      # フックごとに独立した環境 (gitleaks は Go ツールチェーン) を初回に構築する。
+      # これがキャッシュされないと毎回 40 秒前後かかり、検査本体 (0.2 秒) より
+      # 桁違いに重い。キーは設定ファイルの内容にひもづける (rev を上げれば再構築)。
+      - name: Cache pre-commit environments
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            pre-commit-${{ runner.os }}-
+
       # 検証ロジックは Makefile (make ci) に一元化している。
       # ローカル / Stop hook / CI がすべて同じコマンドを呼ぶ。
       - name: Run CI checks

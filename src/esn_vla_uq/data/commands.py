@@ -13,6 +13,7 @@ from pathlib import Path
 from esn_vla_uq.data.io import save_dataset
 from esn_vla_uq.data.sources import SyntheticRolloutSource
 from esn_vla_uq.data.synthetic import DEFAULT_N_EPISODES
+from esn_vla_uq.logging_paths import display_path
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,14 @@ def add_gen_sample_data_arguments(
             f"(既定: <output-dir>/{DEFAULT_OUTPUT_NAME}。サイドカー JSON も同名で生成)"
         ),
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "既存の .npz とサイドカー JSON を上書きする "
+            "(既定では、どちらかが存在するとエラーで中断する)"
+        ),
+    )
     return parser
 
 
@@ -59,7 +68,7 @@ def run_gen_sample_data(args: argparse.Namespace) -> int:
     )
 
     dataset = SyntheticRolloutSource(seed=seed, n_episodes=n_episodes).load()
-    saved_path = save_dataset(dataset, archive_path)
+    saved_path = save_dataset(dataset, archive_path, overwrite=bool(args.force))
     n_success = sum(1 for episode in dataset.episodes if episode.success)
     logger.info(
         "gen-sample-data done: source=%s seed=%d n_episodes=%d n_success=%d "
@@ -69,6 +78,6 @@ def run_gen_sample_data(args: argparse.Namespace) -> int:
         dataset.n_episodes,
         n_success,
         dataset.total_steps,
-        saved_path,
+        display_path(saved_path),
     )
     return 0
