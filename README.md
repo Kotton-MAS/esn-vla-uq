@@ -71,22 +71,28 @@ narrower average interval *and* can tell steps apart, so it is the default.
 
 ## Results on real openpi rollouts
 
-10 episodes from `libero_spatial` (1 trial per task, 90% success rate), collected with
+100 episodes from `libero_spatial` (10 trials per task), collected with
 `scripts/collect_openpi_rollouts.py` against a live `pi0_libero` policy server:
 
-| score        | coverage      | mean half-width | failure-detection AUROC |
-| ------------ | ------------- | --------------- | ----------------------- |
-| `absolute`   | 0.888 ± 0.042 | 2.90            | 0.500                   |
-| `normalized` | 0.881 ± 0.049 | **2.21**        | 0.451                   |
+| split         | coverage            | ECE    | mean half-width |
+| ------------- | ------------------- | ------ | --------------- |
+| `within_task` | **0.9033 ± 0.0102** | 0.0029 | 0.250           |
+| `across_task` | 0.8977 ± 0.0397     | 0.0020 | 0.297           |
 
-**Coverage holds on real data** — and under an `across_task` split, where the
-exchangeability assumption behind the guarantee does not even hold.
+**Coverage holds on real data.** With 10 episodes it was 0.881 ± 0.049; with 100 the
+spread shrank by about 5x — exactly what the "effective sample size is the number of
+episodes" argument predicts. `within_task` having a quarter the variance of
+`across_task` also matches the exchangeability argument.
 
-**Failure detection does not reproduce the synthetic result, and the data cannot settle
-it either way.** Only 1 of the 10 episodes failed, so the AUROC rests on a single
-episode. The label is also coarser: openpi has no notion of a failure onset, so the
-whole failed episode is marked positive, which is not comparable to the synthetic
-`failure_onset` numbers. Deciding this needs a collection with more failures.
+**Failure detection is still undecided.** Only 1 of the 100 episodes failed —
+`pi0_libero` succeeds ~99% of the time on `libero_spatial` — so the AUROC (~0.46) rests
+on a single episode's steps and supports no conclusion either way. Settling it needs a
+harder suite or a weaker policy, not more trials of the same one.
+
+**Collection is not reproducible.** pi0 samples its actions (flow matching), so the same
+`--seed` gives different rollouts; two collections failed on *different* episodes. The
+`--seed` only fixes the LIBERO initial states. Analysis of an already-collected log *is*
+reproducible.
 
 **Coverage is noisier than the step count suggests.** Steps within an episode are
 strongly correlated, so the effective sample size is the number of *episodes* (8 in
