@@ -50,8 +50,8 @@ openpi / LIBERO が入っていない環境では起動時に明示的なエラ�
   `replan_steps` だけだが、**捨てずに全部残す**。チャンク内のばらつきが
   不確実性の材料であり、実行分だけでは分散が測れない)
 - `inference_steps`: チャンクを推論したステップ番号
-- `object_state`: シミュレータが返す物体の状態 (`object-state`)。**失敗様式の
-  事後分類にのみ使い、ESN の入力には渡さない**
+- `object_pos`: 各物体の位置 `float32[T, n_objects, 3]`。**失敗様式の事後分類に
+  のみ使い、ESN の入力には渡さない**
 
 観測画像は記録しない。要件書の入力は「action chunk 系列と固有受容感覚」であり、
 画像は v0.2 以降の VLM 特徴量注入の話になる。画像を貯めるとログが桁違いに重くなる。
@@ -75,6 +75,11 @@ LIBERO の `step` は `done = self._check_success()` であり、**成功以外�
 
 **解釈は加えずに生の値を残す。** ここで分類まで済ませてしまうと、分類の基準を
 変えたくなったときに再収集が要る。分類は読み込み側で行う。
+
+観測にある `object-state` は各物体の量を連結した 1 本のベクトルだが、**その連結順は
+記録しない**。順序を推測して切り出すと、タスクごとに物体数が違う (libero_10 では
+28〜112 次元) ため位置がずれる。`<object>_pos` を個別に取り出して積む方が、
+推測が要らず読み手にも意味が分かる。物体名は `object_names` に残す。
 """
 
 from __future__ import annotations
@@ -132,7 +137,10 @@ class EpisodeRecord:
     actions: list[NDArray[np.float64]] = dataclasses.field(default_factory=list)
     chunks: list[NDArray[np.float64]] = dataclasses.field(default_factory=list)
     inference_steps: list[int] = dataclasses.field(default_factory=list)
-    object_states: list[NDArray[np.float64]] = dataclasses.field(default_factory=list)
+    object_positions: list[NDArray[np.float64]] = dataclasses.field(
+        default_factory=list
+    )
+    object_names: list[str] = dataclasses.field(default_factory=list)
     success: bool = False
 
     def n_steps(self) -> int:
@@ -148,7 +156,7 @@ class EpisodeRecord:
             action=np.asarray(self.actions, dtype=np.float32),
             action_chunk=np.asarray(self.chunks, dtype=np.float32),
             inference_steps=np.asarray(self.inference_steps, dtype=np.int64),
-            object_state=np.asarray(self.object_states, dtype=np.float32),
+            object_pos=np.asarray(self.object_positions, dtype=np.float32),
         )
 
 
@@ -185,8 +193,6 @@ def write_manifest(
     chunk_horizon: int,
     policy: str,
     server_metadata: dict[str, object],
-    object_state_dim: int,
-    object_keys: list[str],
 ) -> Path:
     """マニフェストを書き出す。
 
@@ -205,8 +211,6 @@ def write_manifest(
         "control_hz": CONTROL_HZ,
         "state_dim": state_dim,
         "action_dim": action_dim,
-        "object_state_dim": object_state_dim,
-        "object_keys": object_keys,
         "chunk_horizon": chunk_horizon,
         "replan_steps": int(args.replan_steps),
         "episodes": [
@@ -215,6 +219,8 @@ def write_manifest(
                 "task_name": record.task_name,
                 "success": record.success,
                 "n_steps": record.n_steps(),
+                # 物体はタスクごとに違うので、エピソード単位で持つ。
+                "object_names": record.object_names,
             }
             for record in records
         ],
@@ -259,9 +265,6 @@ def main(argv: list[str] | None = None) -> int:
 
     records: list[EpisodeRecord] = []
     chunk_horizon = 0
-    # 物体の状態は `object-state` に連結されて返る。個々のキー名も残しておくと、
-    # 後から「どの物体か」を辿れる。
-    object_keys: list[str] = []
     for task_id in range(task_suite.n_tasks):
         task = task_suite.get_task(task_id)
         initial_states = task_suite.get_task_init_states(task_id)
@@ -276,12 +279,6 @@ def main(argv: list[str] | None = None) -> int:
         for episode_index in range(args.num_trials_per_task):
             env.reset()
             obs = env.set_init_state(initial_states[episode_index])
-            if not object_keys:
-                object_keys = sorted(
-                    k
-                    for k in obs
-                    if k.endswith(("_pos", "_quat")) and "robot0" not in k
-                )
             record = EpisodeRecord(
                 episode_id=f"openpi_{task_id:03d}_{episode_index:03d}",
                 task_name=str(task.language),
@@ -336,8 +333,13 @@ def main(argv: list[str] | None = None) -> int:
                 action = action_plan.popleft()
                 record.states.append(state)
                 record.actions.append(np.asarray(action, dtype=np.float64))
-                record.object_states.append(
-                    np.asarray(obs["object-state"], dtype=np.float64)
+                if not record.object_names:
+                    record.object_names = _object_names(obs)
+                record.object_positions.append(
+                    np.asarray(
+                        [obs[f"{name}_pos"] for name in record.object_names],
+                        dtype=np.float64,
+                    )
                 )
                 obs, _reward, done, _info = env.step(np.asarray(action).tolist())
                 if done:
@@ -370,10 +372,6 @@ def main(argv: list[str] | None = None) -> int:
         chunk_horizon=chunk_horizon,
         policy=policy,
         server_metadata=server_metadata,
-        object_state_dim=(
-            int(records[0].object_states[0].shape[0]) if records[0].object_states else 0
-        ),
-        object_keys=object_keys,
     )
     n_success = sum(1 for record in records if record.success)
     logger.info(
@@ -405,6 +403,20 @@ def _resolve_policy_name(
         "manifest には 'unknown' を記録します (--policy-label で明示できます)"
     )
     return "unknown"
+
+
+def _object_names(obs: dict[str, object]) -> list[str]:
+    """観測から物体名を取り出す。
+
+    `<name>_pos` を持ち、かつロボット自身でないものを物体とみなす。
+    `<name>_to_robot0_eef_pos` は eef からの相対位置であって物体の位置ではない
+    ため除く (混ぜるとグリッパが動くだけで物体が動いたことになる)。
+    """
+    return sorted(
+        key[: -len("_pos")]
+        for key in obs
+        if key.endswith("_pos") and "robot0" not in key
+    )
 
 
 def _quat2axisangle(quat: NDArray[np.float64]) -> NDArray[np.float64]:
