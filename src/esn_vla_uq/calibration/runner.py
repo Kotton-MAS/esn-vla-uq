@@ -81,6 +81,21 @@ EPISODE_LABEL_CAVEAT: Final[str] = (
 )
 """粗いラベルを使ったときの注意。"""
 
+DETECTION_IS_EXPLORATORY_CAVEAT: Final[str] = (
+    "失敗検知 AUROC は**探索的な診断値であり、v0.1 の成果ではない**。"
+    "実 openpi ログでは 0.457〜0.477 と無相関で、代替の観測量もタスク内で見ると"
+    "判定不能だった (docs/design.md 10.14 節)。合成データで高い値が出るのは生成器が"
+    "チャンク分散と失敗を結びつけて作っているためである。"
+    "不確実性スコアは「予測が難しいステップ」を表す量であり、それが「失敗する"
+    "ステップ」と一致するかは未検証。"
+)
+"""失敗検知の位置づけ。
+
+**どのデータでも必ず付ける。** 数値だけを見た読み手が「失敗検知できる」と読むのを
+防ぐ。合成データで 0.87 が出るのは生成器の作りによるものであり、実データでは
+再現しない。
+"""
+
 INVERTED_DETECTION_THRESHOLD: Final[float] = 0.45
 """この値を下回ったら「不確実性が失敗と反相関している」とみなす閾値。
 
@@ -335,7 +350,7 @@ def _caveats(
     mean_auroc: float | None,
 ) -> tuple[str, ...]:
     """レポートに載せる注意書きを組み立てる。"""
-    caveats = [EFFECTIVE_SAMPLE_SIZE_CAVEAT]
+    caveats = [EFFECTIVE_SAMPLE_SIZE_CAVEAT, DETECTION_IS_EXPLORATORY_CAVEAT]
     if data_source == "synthetic":
         caveats.insert(0, SYNTHETIC_DATA_CAVEAT)
     if label_kind == "episode_success":
