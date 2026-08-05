@@ -282,7 +282,8 @@ def main(argv: list[str] | None = None) -> int:
     for task_id in task_ids:
         if not 0 <= task_id < task_suite.n_tasks:
             raise ValueError(
-                f"--task-ids: [0, {task_suite.n_tasks}) の範囲で指定してください (actual={task_id})"
+                f"--task-ids: [0, {task_suite.n_tasks}) の範囲で指定してください "
+                f"(actual={task_id})"
             )
         task = task_suite.get_task(task_id)
         initial_states = task_suite.get_task_init_states(task_id)
