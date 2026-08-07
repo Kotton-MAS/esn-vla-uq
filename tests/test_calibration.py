@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -25,6 +27,7 @@ from esn_vla_uq.calibration.runner import (
     run_calibration,
 )
 from esn_vla_uq.cli import main
+from esn_vla_uq.data.io import save_dataset
 from esn_vla_uq.data.schema import RolloutDataset
 from esn_vla_uq.data.synthetic import generate_dataset
 from esn_vla_uq.esn import ESNConfig
@@ -465,3 +468,43 @@ def test_auroc_interval_rejects_invalid_inputs() -> None:
         auroc_confidence_interval(0.5, n_positive=0, n_negative=10)
     with pytest.raises(ValueError, match="z"):
         auroc_confidence_interval(0.5, n_positive=10, n_negative=10, z=-1.0)
+
+
+def test_cli_logs_the_missing_auroc_instead_of_crashing_the_line(
+    dataset: RolloutDataset, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """失敗エピソードが無いと AUROC が `None` になる。その行が消えないこと。
+
+    `%.4f` に `None` を渡すと logging が整形に失敗し、**完了行だけが消えて
+    stderr にスタックトレースが出る**。数値が出ないこと自体は異常ではない
+    (`DetectionSummary.unavailable_reason`) ので、`demo` と同じく "n/a" と書く。
+    """
+    successes = [episode for episode in dataset.episodes if episode.success]
+    assert successes, "成功エピソードが 1 件も無いとこのテストは成立しない"
+    all_success = dataclasses.replace(dataset, episodes=successes)
+    path = save_dataset(all_success, tmp_path / "all_success.npz")
+
+    with caplog.at_level(logging.INFO):
+        exit_code = main(
+            [
+                "calibrate",
+                "--input",
+                str(path),
+                "--output-dir",
+                str(tmp_path),
+                "--n-reservoir",
+                str(N_RESERVOIR),
+                "--n-splits",
+                "2",
+            ]
+        )
+    assert exit_code == 0
+
+    done = [
+        record
+        for record in caplog.records
+        if record.message.startswith("calibrate done:")
+    ]
+    assert len(done) == 1
+    # `record.message` は整形済み。整形に失敗していればここに到達しない。
+    assert "auroc=n/a" in done[0].message

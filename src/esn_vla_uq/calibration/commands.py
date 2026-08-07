@@ -224,16 +224,21 @@ def execute_calibrate(opts: CalibrateOptions) -> int:
     if opts.diagram:
         _write_diagram(report.reliability, opts.output_dir, report.data_source)
 
+    # 失敗エピソードを含まない出所では AUROC が定義できず `None` になる
+    # (`DetectionSummary.unavailable_reason`)。`%.4f` に None を渡すと logging が
+    # 整形に失敗し、**この 1 行だけが消えてスタックトレースが stderr に出る**。
+    # 数値が出ないこと自体は異常ではないので、`demo` と同じく "n/a" と書く。
+    auroc = report.detection.mean_auroc
     logger.info(
         "calibrate done: readout=%s score_kind=%s split=%s coverage=%.4f±%.4f "
-        "width=%.4f auroc=%.4f report=%s",
+        "width=%.4f auroc=%s report=%s",
         config.readout_features,
         report.conformal["score_kind"],
         report.split["strategy"],
         report.coverage.mean,
         report.coverage.std,
         report.coverage.mean_interval_width,
-        report.detection.mean_auroc,
+        "n/a" if auroc is None else f"{auroc:.4f}",
         display_path(path),
     )
     return 0

@@ -9,6 +9,7 @@ import pytest
 
 from esn_vla_uq import __version__
 from esn_vla_uq.cli import build_parser, main
+from esn_vla_uq.esn.config import DEFAULT_LEAK_RATE
 
 
 def _pyproject_version() -> str:
@@ -100,7 +101,7 @@ def test_diagnose_option_defaults() -> None:
     args = build_parser().parse_args(["diagnose"])
     assert args.n_reservoir == 200
     assert args.spectral_radius == 0.9
-    assert args.leak_rate == 1.0
+    assert args.leak_rate == DEFAULT_LEAK_RATE
     assert args.skip_memory_capacity is False
 
 

@@ -102,23 +102,26 @@ candidate for porting onto a physical reservoir later.
 
 Nominal coverage 90%, averaged over 20 calibration/test splits:
 
-| score        | interval width  | coverage      | mean half-width |
-| ------------ | --------------- | ------------- | --------------- |
-| `absolute`   | constant        | 0.903 ± 0.027 | 0.0525          |
-| `normalized` | varies per step | 0.903 ± 0.026 | **0.0486**      |
+| score        | interval width  | coverage        | ECE    | mean half-width |
+| ------------ | --------------- | --------------- | ------ | --------------- |
+| `absolute`   | constant        | 0.8945 ± 0.0309 | 0.0134 | 0.0432          |
+| `normalized` | varies per step | 0.8846 ± 0.0362 | 0.0269 | **0.0423**      |
 
-`normalized` matches `absolute`'s coverage with a narrower average interval, so it is
-the default.
+`normalized` gives a narrower average interval and a per-step uncertainty score, so it
+is the default. The coverage shortfall is smaller than one standard error of the
+split-to-split spread.
 
 ## Results on real openpi rollouts
 
 100 episodes from `libero_spatial` (10 trials per task), collected with
 `scripts/collect_openpi_rollouts.py` against a live `pi0_libero` policy server:
 
-| split         | coverage            | ECE    | mean half-width |
-| ------------- | ------------------- | ------ | --------------- |
-| `within_task` | **0.9033 ± 0.0102** | 0.0029 | 0.250           |
-| `across_task` | 0.8977 ± 0.0397     | 0.0020 | 0.297           |
+| suite / split                  | coverage            | ECE    | mean half-width |
+| ------------------------------ | ------------------- | ------ | --------------- |
+| `libero_spatial` `within_task` | **0.9019 ± 0.0089** | 0.0022 | 0.195           |
+| `libero_spatial` `across_task` | 0.8906 ± 0.0486     | 0.0055 | 0.237           |
+| `libero_10` `within_task`      | 0.9044 ± 0.0240     | 0.0065 | 0.363           |
+| `libero_10` `across_task`      | **0.7929 ± 0.1033** | 0.0797 | 0.590           |
 
 **Coverage holds on real data across four collections.** With 10 episodes it was
 0.881 ± 0.049; with 100 the spread shrank about 5x — exactly what the "effective sample
@@ -126,12 +129,56 @@ size is the number of episodes" argument predicts.
 
 **`across_task` breaks down on long-horizon tasks**, which is what the exchangeability
 argument predicts: calibration and test come from different task distributions, so the
-guarantee does not transfer. On `libero_10` it drops to 0.779 with 17x the ECE. This is
+guarantee does not transfer. On `libero_10` it drops to 0.793 with 12x the ECE. This is
 why `within_task` is the default.
 
 **Collection is not reproducible.** pi0 samples its actions (flow matching), so the same
 `--seed` gives different rollouts. The `--seed` only fixes the LIBERO initial states.
 Analysis of an already-collected log *is* reproducible.
+
+## What the reservoir contributes
+
+The read-out sees `[1, u, x]` — bias, the raw input, and the reservoir state. Since `u`
+contains `action[t]` and the target is `action[t+1]`, the pass-through alone can express
+the identity map. So "the intervals are narrow" is not by itself evidence that the
+reservoir is doing anything. `calibrate --readout` runs the ablation
+(`docs/design.md` §11):
+
+| design matrix | what it tests         | mean half-width vs `[1, u, x]`                 |
+| ------------- | --------------------- | ---------------------------------------------- |
+| `[1, x]`      | drop the pass-through | **1.35–6.6x wider**, loses on 20/20 splits     |
+| `[1, u]`      | drop the reservoir    | 0.56–1.12x, **direction depends on the suite** |
+
+**Most of the work is the pass-through.** Removing it is far more damaging than removing
+the reservoir.
+
+**The reservoir's own contribution is about 10%, and its sign is not universal.** On
+`libero_10` it narrows the interval by 7–11%; on `libero_spatial` it *widens* it by 17%,
+and on the synthetic data by 77%. It also shrinks as the reservoir grows — largest at
+N=50, nearly gone at N=500 (§11.6).
+
+Two things follow, both of which cost us a hypothesis:
+
+- **Reservoir diagnostics do not predict interval quality.** Sweeping spectral radius
+  and leak rate over 15 settings moves memory capacity by 6.4x and the interval width by
+  5%. Whether there *is* a reservoir matters 2–3x more than which one. The correlation
+  even points the wrong way (more memory, wider intervals) and flips sign between task
+  suites (§13).
+- **`rho((1-a)I + aW)` does not summarise the dynamics.** Two settings with the same
+  effective spectral radius can differ 2–3x in memory capacity, because the leak rate
+  also scales the input drive — a path that does not appear in `rho(A)` (§13.5).
+
+The one finding that transferred across suites was a hyperparameter, not a diagnostic:
+a non-leaky reservoir (`leak_rate=1.0`) was the worst setting in both suites (§13.8) —
+**but only at the regularisation strengths swept there.** Widen the sweep to include
+`ridge_alpha=1`, and the direction of the leak-rate effect reverses (§15.3). The two
+hyperparameters do not act independently; a sweep over one of them does not tell you
+which way the other should go.
+
+The defaults (`leak_rate=0.7`, `ridge_alpha=1.0`) were picked to be the least-bad
+compromise across four datasets rather than the best on any one of them: no setting is
+good everywhere, and even this one is 24% off the per-dataset optimum somewhere (§15).
+**Treat them as a starting point, not as tuned values.**
 
 ## Scope
 
@@ -140,15 +187,26 @@ guarantee, validated on real openpi rollouts, plus reservoir diagnostics.
 
 **What it does not:** that the uncertainty score detects failures. `calibrate` still
 reports a failure-detection AUROC, but it is an exploratory diagnostic. On real openpi
-rollouts it sits at chance (0.457–0.477); the high value on synthetic data (0.87) comes
-from the generator having been built with that relationship in it. Alternative
-observables were evaluated and none survived a within-task check — with 23 failures
-spread over 8 tasks there are only 1–3 failures per task, and per-task AUROC swings
-between 0.000 and 1.000.
+rollouts it sits at chance; the high value on synthetic data (0.87) comes from the
+generator having been built with that relationship in it.
 
-Revisiting this needs 5–10 failures per task and a setting where failures other than
-timeout occur; LIBERO has no early-termination condition, so every observed failure was
-the policy running out of steps. See `docs/design.md` §10.14.
+This was settled with an interval, not a point estimate. Across 615 episodes with
+object positions recorded, chunk dispersion gives **AUROC 0.475 [0.418, 0.533]** — the
+interval excludes 0.6, the level below which a detector is not worth having. Splitting
+by failure mode does not change it (`docs/design.md` §10.16).
+
+**One thing is not excluded.** Temporal features of the reservoir's state trajectory —
+autocorrelation, effective dimension, novelty — were evaluated against a pre-registered
+rule (§14). Against the *moment* of failure they are flat (0.463–0.487, 0.6 excluded),
+so the "uncertainty spikes just before failure" picture is not supported. But per
+episode, `dropped` failures give 0.613 [0.533, 0.693] for novelty: **above chance,
+straddling 0.6.** Closing that gap would take roughly 16,000 episodes, and 0.6 is the
+floor of usefulness anyway — so failure detection is recorded as *undecided*, not
+refuted, and is still not claimed.
+
+Failure mode also flips the sign: trajectories collapse for failures that grasped and
+then stalled, but not for failures that never grasped at all. **A detector with a fixed
+sign would be wrong half the time.**
 
 ## Reservoir diagnostics
 
@@ -170,6 +228,16 @@ single number: a sufficient condition (sigma_max < 1), a necessary one (rho < 1)
 empirical convergence test. The default configuration satisfies the necessary but not
 the sufficient condition, which is normal and why all three are printed.
 
+Memory capacity is measured **on the same reservoir** as the other two. That sounds
+obvious, but it was not true until recently: the measurement used a fixed scalar-input
+reservoir, and because `W_in`, `b` and `W` are drawn from one RNG in that order, a
+different input dimension yields a different `W` too. A report for `--n-inputs 17` was
+pairing that reservoir's spectral radius with a *different* reservoir's memory capacity.
+
+**Treat these as a health check, not as a predictor of interval quality.** They tell you
+whether the reservoir is in a sane regime. They do not tell you whether the intervals
+will be tight — see [What the reservoir contributes](#what-the-reservoir-contributes).
+
 ## Requirements
 
 - Python 3.12+ and [uv](https://docs.astral.sh/uv/)
@@ -181,7 +249,7 @@ the sufficient condition, which is normal and why all three are printed.
 
 - Real LIBERO footage in the demo (the video panel is a synthetic stand-in).
 - VLM feature injection (deferred to v0.2 by the requirements).
-- Failure detection — see [Scope](#scope) for why it is out of this release.
+- Failure detection — see [Scope](#scope). Recorded as undecided, not claimed.
 
 ## Development
 
@@ -202,7 +270,7 @@ src/esn_vla_uq/
 ├── provenance.py    # DataSource (lowest layer)
 ├── logging_paths.py # log-safe path rendering (lowest layer)
 ├── esn/             # reservoir, ridge read-out, model
-├── diagnostics/     # spectral radius / ESP / memory capacity
+├── diagnostics/     # spectral radius / ESP / memory capacity / state trajectory
 ├── data/            # schema, invariants, sources/ (synthetic + openpi), IO, features
 ├── uncertainty/     # prediction task, splits, nonconformity, split conformal
 ├── calibration/     # coverage / ECE / reliability diagram
@@ -218,6 +286,8 @@ scripts/
 - [`docs/design.md`](docs/design.md) — design document, including every measurement that
   changed a decision
 - [`docs/plans/`](docs/plans/) — approved implementation specs per sprint
+- [`docs/next-research-directions.md`](docs/next-research-directions.md) — what was
+  measured next, and what each measurement settled or failed to settle
 - [`docs/next-pr-candidates.md`](docs/next-pr-candidates.md) — known follow-up items
 - [`CHANGELOG.md`](CHANGELOG.md)
 
