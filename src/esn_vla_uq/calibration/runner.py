@@ -34,6 +34,7 @@ from esn_vla_uq.esn.config import ESNConfig
 from esn_vla_uq.provenance import DataSource
 from esn_vla_uq.uncertainty.conformal import (
     DEFAULT_ALPHA,
+    DEFAULT_INPUT_LAGS,
     DEFAULT_WASHOUT,
     SplitConformalPredictor,
 )
@@ -164,11 +165,16 @@ def _evaluate_split(
     split_strategy: SplitStrategy,
     split_seed: int,
     washout: int,
+    input_lags: int,
 ) -> _SplitOutcome:
     """1 つの分割で fit -> calibrate -> evaluate を行う。"""
     split = split_samples(samples, strategy=split_strategy, seed=split_seed)
     predictor = SplitConformalPredictor(
-        config, alpha=alpha, score_kind=score_kind, washout=washout
+        config,
+        alpha=alpha,
+        score_kind=score_kind,
+        washout=washout,
+        input_lags=input_lags,
     )
     predictor.fit(split.fit).calibrate(split.calibrate)
 
@@ -202,6 +208,7 @@ def run_calibration(
     split_seed: int = 0,
     n_splits: int = DEFAULT_N_SPLITS,
     washout: int = DEFAULT_WASHOUT,
+    input_lags: int = DEFAULT_INPUT_LAGS,
     generated_at: str | None = None,
 ) -> CalibrationReport:
     """データセットに split conformal を掛けて較正レポートを組み立てる。
@@ -228,6 +235,8 @@ def run_calibration(
             ではない。** あちらは `ESN.fit` の経路だけに効き、この経路は通らない
             (`uncertainty/conformal.py` の `DEFAULT_WASHOUT`)。既定は 0 で、
             初期過渡も「予測しづらい区間」として評価に含める。
+        input_lags: read-out の設計行列に足す入力のラグ数。リザバー無しでこれだけを
+            足したものが「ただの遅延線」baseline になる (`docs/design.md` 16 節)。
         generated_at: タイムスタンプの明示指定 (テスト用)。
 
     Returns:
@@ -248,6 +257,7 @@ def run_calibration(
             split_strategy=split_strategy,
             split_seed=split_seed + offset,
             washout=washout,
+            input_lags=input_lags,
         )
         for offset in range(n_splits)
     ]
@@ -295,6 +305,8 @@ def run_calibration(
         # **この経路で実際に効く washout はこちらである。** レポートに載る
         # `esn_config.washout` は `ESN.fit` 用の値で、較正では使われない (A3)。
         "washout": washout,
+        # 遅延埋め込み baseline のラグ数 (16 節)。
+        "input_lags": input_lags,
     }
     return CalibrationReport(
         schema_version=CALIBRATION_SCHEMA_VERSION,

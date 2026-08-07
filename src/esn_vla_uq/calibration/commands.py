@@ -34,7 +34,11 @@ from esn_vla_uq.esn.config import (
     ReadoutFeatures,
 )
 from esn_vla_uq.logging_paths import display_path
-from esn_vla_uq.uncertainty.conformal import DEFAULT_ALPHA, DEFAULT_WASHOUT
+from esn_vla_uq.uncertainty.conformal import (
+    DEFAULT_ALPHA,
+    DEFAULT_INPUT_LAGS,
+    DEFAULT_WASHOUT,
+)
 from esn_vla_uq.uncertainty.nonconformity import (
     DEFAULT_SCORE_KIND,
     SUPPORTED_SCORE_KINDS,
@@ -125,6 +129,17 @@ def add_calibrate_arguments(
         ),
     )
     parser.add_argument(
+        "--input-lags",
+        type=int,
+        default=DEFAULT_INPUT_LAGS,
+        help=(
+            "read-out の設計行列に u[t-1]..u[t-k] を足す。--readout input_only と"
+            "組み合わせると「ただの遅延線」baseline になり、リザバーが効かない理由が"
+            "「タスクが記憶を要らない」のか「ESN の実装が下手」なのかを切り分けられる "
+            "(既定: %(default)s)"
+        ),
+    )
+    parser.add_argument(
         "--n-splits",
         type=int,
         default=DEFAULT_N_SPLITS,
@@ -159,6 +174,7 @@ class CalibrateOptions:
     leak_rate: float
     readout: ReadoutFeatures
     washout: int
+    input_lags: int
     n_splits: int
     diagram: bool
 
@@ -177,6 +193,7 @@ class CalibrateOptions:
             leak_rate=options.get_float(args, "leak_rate"),
             readout=options.get_choice(args, "readout", SUPPORTED_READOUT_FEATURES),
             washout=options.get_int(args, "washout"),
+            input_lags=options.get_int(args, "input_lags"),
             n_splits=options.get_int(args, "n_splits"),
             diagram=options.get_bool(args, "diagram"),
         )
@@ -217,6 +234,7 @@ def execute_calibrate(opts: CalibrateOptions) -> int:
         split_seed=seed,
         n_splits=opts.n_splits,
         washout=opts.washout,
+        input_lags=opts.input_lags,
     )
     report.log_summary()
     path = write_report(report, opts.output_dir)

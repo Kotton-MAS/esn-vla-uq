@@ -490,3 +490,81 @@ def test_retained_mask_is_all_true_without_washout(
     split = split_samples(build_samples(dataset), seed=0)
     mask = SplitConformalPredictor(config).retained_mask(split.test)
     assert mask.all()
+
+
+# --- 遅延埋め込み baseline (docs/next-research-directions.md ⑤) -----------------
+
+
+def test_lag_segments_shifts_within_the_segment() -> None:
+    """ラグは区間内でのみ取り、先頭は端点で埋める。"""
+    from esn_vla_uq.uncertainty.conformal import lag_segments
+
+    segment = np.arange(10, dtype=np.float64).reshape(5, 2)
+    (lagged,) = lag_segments([segment], 2)
+    assert lagged.shape == (5, 6)
+    np.testing.assert_allclose(lagged[:, 0:2], segment)
+    # lag=1: 先頭は segment[0]、以降は 1 つ前。
+    np.testing.assert_allclose(lagged[0, 2:4], segment[0])
+    np.testing.assert_allclose(lagged[1:, 2:4], segment[:-1])
+    # lag=2: 先頭 2 行が segment[0]。
+    np.testing.assert_allclose(lagged[:2, 4:6], np.tile(segment[0], (2, 1)))
+    np.testing.assert_allclose(lagged[2:, 4:6], segment[:-2])
+
+
+def test_lag_segments_does_not_cross_episode_boundaries() -> None:
+    """別の区間の値が混ざらないこと (3.9 節と同じ制約)。"""
+    from esn_vla_uq.uncertainty.conformal import lag_segments
+
+    first = np.zeros((3, 1))
+    second = np.ones((3, 1))
+    _, lagged_second = lag_segments([first, second], 1)
+    # 2 つ目の区間の先頭ラグは 0 (1 つ目の末尾) ではなく 1 (自分の先頭)。
+    assert lagged_second[0, 1] == 1.0
+
+
+def test_lag_segments_keeps_the_row_count() -> None:
+    """行を落とさない。全条件で同じ行を保つのが比較の前提 (12.3 節)。"""
+    from esn_vla_uq.uncertainty.conformal import lag_segments
+
+    segments = [np.zeros((7, 3)), np.zeros((11, 3))]
+    lagged = lag_segments(segments, 5)
+    assert [block.shape[0] for block in lagged] == [7, 11]
+
+
+def test_lag_segments_rejects_negative_lags() -> None:
+    from esn_vla_uq.uncertainty.conformal import lag_segments
+
+    with pytest.raises(ValueError, match="n_lags"):
+        lag_segments([np.zeros((3, 1))], -1)
+
+
+def test_input_lags_widen_the_design_matrix_only(
+    dataset: RolloutDataset, config: ESNConfig
+) -> None:
+    """ラグは read-out にだけ入り、リザバーは生の u で駆動される。"""
+    split = split_samples(build_samples(dataset), seed=0)
+    plain = SplitConformalPredictor(config)
+    lagged = SplitConformalPredictor(config, input_lags=3)
+
+    plain_states, plain_inputs, _ = plain._design(split.fit)
+    lag_states, lag_inputs, _ = lagged._design(split.fit)
+
+    # リザバー状態は完全に同一 (ラグを見ていない)。
+    np.testing.assert_allclose(plain_states, lag_states)
+    # 入力だけが (k + 1) 倍に広がる。行数は同じ。
+    assert lag_inputs.shape == (plain_inputs.shape[0], plain_inputs.shape[1] * 4)
+    np.testing.assert_allclose(lag_inputs[:, : plain_inputs.shape[1]], plain_inputs)
+
+
+def test_delay_line_baseline_runs_without_a_reservoir(
+    dataset: RolloutDataset,
+) -> None:
+    """`use_reservoir=False` + ラグ = ただの遅延線 baseline。"""
+    baseline = ESNConfig(n_reservoir=N_RESERVOIR, seed=0, use_reservoir=False)
+    split = split_samples(build_samples(dataset), seed=0)
+    predictor = SplitConformalPredictor(baseline, input_lags=5).fit(split.fit)
+    predictor.calibrate(split.calibrate)
+    intervals = predictor.predict_intervals(split.test)
+
+    assert predictor._reservoir is None
+    assert np.all(np.isfinite(intervals.half_width))
