@@ -77,6 +77,7 @@ from numpy.typing import NDArray
 from esn_vla_uq.data.failure_modes import (
     FailureMode,
     classify_failure,
+    drop_onset,
     object_heights,
 )
 from esn_vla_uq.data.schema import (
@@ -196,6 +197,64 @@ def failure_mode_breakdown(log_dir: Path) -> dict[FailureMode, int]:
         mode = classify_failure(trace, success=success)
         counts[mode] = counts.get(mode, 0) + 1
     return counts
+
+
+@dataclass(frozen=True)
+class FailureModeDetail:
+    """1 エピソード分の失敗様式と、そこから取れる時刻。
+
+    Attributes:
+        episode_id: エピソード識別子。
+        mode: 推定した失敗様式 (`data/failure_modes.py`)。
+        drop_onset: 落下が始まったステップ。``mode != "dropped"`` では `None`。
+            **実データでステップ単位の失敗時刻が取れるのはここだけである**
+            (`docs/design.md` 10.16 節)。
+    """
+
+    episode_id: str
+    mode: FailureMode
+    drop_onset: int | None
+
+
+def failure_mode_details(log_dir: Path) -> list[FailureModeDetail]:
+    """収集ログのエピソードごとに失敗様式と落下開始時刻を返す。
+
+    `failure_mode_breakdown` が件数だけを返すのに対し、こちらはエピソード単位で
+    返す。落下開始時刻を使う解析 (`docs/design.md` 14 節) に必要である。
+
+    分類は**ヒューリスティックな推定**であってシミュレータが報告した事実では
+    ない (`data/failure_modes.py` の docstring)。
+
+    Args:
+        log_dir: `manifest.json` を含むログディレクトリ。
+
+    Returns:
+        マニフェストの並び順の `FailureModeDetail`。
+
+    Raises:
+        FileNotFoundError: マニフェストまたはエピソード npz が無い場合。
+        ValueError: 形式バージョンが違う場合。
+    """
+    manifest = _read_manifest(log_dir / MANIFEST_NAME)
+    details: list[FailureModeDetail] = []
+    for entry in _require_episodes(manifest):
+        episode_id = _require_str(entry, "episode_id")
+        success = _require_bool(entry, "success")
+        path = log_dir / EPISODES_DIRNAME / f"{episode_id}.npz"
+        if not path.exists():
+            raise FileNotFoundError(f"エピソードがありません: {path.name}")
+        with np.load(path, allow_pickle=False) as archive:
+            raw = archive.get("object_pos")
+        trace = (
+            None if raw is None else object_heights(np.asarray(raw, dtype=np.float32))
+        )
+        mode = classify_failure(trace, success=success)
+        details.append(
+            FailureModeDetail(
+                episode_id=episode_id, mode=mode, drop_onset=drop_onset(trace, mode)
+            )
+        )
+    return details
 
 
 def _read_manifest(path: Path) -> dict[str, object]:

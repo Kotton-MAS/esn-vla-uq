@@ -11,6 +11,7 @@ import pytest
 from esn_vla_uq.calibration import (
     ECE_DEFINITION,
     ReliabilityCurve,
+    auroc_confidence_interval,
     conformal_coverage,
     detection_auroc,
     rank_data,
@@ -421,3 +422,46 @@ def test_detection_is_always_marked_exploratory(report: CalibrationReport) -> No
     from esn_vla_uq.calibration.runner import DETECTION_IS_EXPLORATORY_CAVEAT
 
     assert DETECTION_IS_EXPLORATORY_CAVEAT in report.caveats
+
+
+# --- AUROC の区間 (docs/design.md 14 節の判定規則) ------------------------------
+
+
+def test_auroc_interval_brackets_the_point_estimate() -> None:
+    low, high = auroc_confidence_interval(0.5, n_positive=63, n_negative=287)
+    assert low < 0.5 < high
+
+
+def test_auroc_interval_narrows_with_more_samples() -> None:
+    """標本が増えれば区間は狭くなる。"""
+    small = auroc_confidence_interval(0.5, n_positive=10, n_negative=50)
+    large = auroc_confidence_interval(0.5, n_positive=100, n_negative=500)
+    assert (large[1] - large[0]) < (small[1] - small[0])
+
+
+def test_auroc_interval_is_clipped_to_the_unit_range() -> None:
+    low, high = auroc_confidence_interval(0.99, n_positive=3, n_negative=3)
+    assert low >= 0.0
+    assert high <= 1.0
+
+
+def test_auroc_interval_reproduces_the_recorded_dropped_result() -> None:
+    """10.16 節の `dropped` の区間を再現する (失敗 63 / 成功 287)。
+
+    有効標本数に**エピソード数**を使うことがこの数値の前提である。ステップ数を
+    渡すと区間が桁違いに狭く出る。
+    """
+    low, high = auroc_confidence_interval(0.469, n_positive=63, n_negative=287)
+    assert low == pytest.approx(0.382, abs=0.01)
+    assert high == pytest.approx(0.556, abs=0.01)
+    # 実用水準 0.6 を排除できる。
+    assert high < 0.6
+
+
+def test_auroc_interval_rejects_invalid_inputs() -> None:
+    with pytest.raises(ValueError, match="auroc"):
+        auroc_confidence_interval(1.5, n_positive=10, n_negative=10)
+    with pytest.raises(ValueError, match="有効標本数"):
+        auroc_confidence_interval(0.5, n_positive=0, n_negative=10)
+    with pytest.raises(ValueError, match="z"):
+        auroc_confidence_interval(0.5, n_positive=10, n_negative=10, z=-1.0)

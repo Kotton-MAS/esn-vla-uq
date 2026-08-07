@@ -9,6 +9,9 @@
 
 モジュール構成: `spectral` / `esp` / `memory_capacity` が個々の指標、`runner` が
 実行の組み立て、`report` が結果の表現 (レポート型・JSON・ログ) を担う。
+`trajectory` は実データを流したときの状態軌道の統計量で、他の 3 つと違い
+リザバー単体ではなく**駆動された軌道**を見る (失敗検知の検証に使ったが、
+検知には使えないと決着している。`docs/design.md` 14 節)。
 """
 
 from esn_vla_uq.diagnostics.esp import (
@@ -50,16 +53,25 @@ from esn_vla_uq.diagnostics.spectral import (
     largest_singular_value,
     spectral_radius,
 )
+from esn_vla_uq.diagnostics.trajectory import (
+    DEFAULT_LAG,
+    DEFAULT_WINDOW,
+    state_autocorrelation,
+    state_novelty,
+    state_participation_ratio,
+)
 
 __all__ = [
     "DEFAULT_DIAGNOSTICS_N_INPUTS",
     "DEFAULT_ESP_N_INITIAL_STATES",
     "DEFAULT_ESP_N_STEPS",
     "DEFAULT_ESP_TOL",
+    "DEFAULT_LAG",
     "DEFAULT_MC_N_TEST",
     "DEFAULT_MC_N_TRAIN",
     "DEFAULT_MC_RIDGE_ALPHA",
     "DEFAULT_MC_WASHOUT",
+    "DEFAULT_WINDOW",
     "MEMORY_CAPACITY_INPUT_DIM",
     "REPORT_SCHEMA_VERSION",
     "REPORT_SUBDIR",
@@ -78,6 +90,9 @@ __all__ = [
     "linear_memory_capacity",
     "run_diagnostics",
     "spectral_radius",
+    "state_autocorrelation",
+    "state_novelty",
+    "state_participation_ratio",
     "summarize_spectral",
     "utc_timestamp",
     "write_report",

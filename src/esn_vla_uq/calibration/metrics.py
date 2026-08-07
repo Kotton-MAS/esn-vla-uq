@@ -19,6 +19,7 @@ reliability curve を引き、**両者の差の絶対値の平均**を ECE と�
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Final
 
@@ -201,3 +202,62 @@ def detection_auroc(scores: NDArray[np.float64], positive: NDArray[np.bool_]) ->
     ranks = rank_data(scores)
     u_statistic = float(ranks[positive].sum()) - n_positive * (n_positive + 1) / 2.0
     return u_statistic / (n_positive * n_negative)
+
+
+DEFAULT_AUROC_Z: Final[float] = 1.96
+"""95% 区間に対応する正規分布の分位点。"""
+
+
+def auroc_confidence_interval(
+    auroc: float,
+    *,
+    n_positive: int,
+    n_negative: int,
+    z: float = DEFAULT_AUROC_Z,
+) -> tuple[float, float]:
+    """AUROC の信頼区間を Hanley-McNeil の標準誤差から求める。
+
+    ``SE = sqrt((A(1-A) + (n1-1)(Q1-A^2) + (n2-1)(Q2-A^2)) / (n1 n2))``
+    ただし ``Q1 = A/(2-A)``、``Q2 = 2A^2/(1+A)``。
+
+    **``n_positive`` / ``n_negative`` には有効標本数を渡すこと。** ステップ単位で
+    AUROC を計算していても、同一エピソード内のステップは強く相関しているため、
+    分散を決めるのは**エピソード数**である (`docs/design.md` 9.3 節、10.9 節)。
+    ステップ数を渡すと区間が桁違いに狭く出て、実体のない信号を有意だと読む。
+    どちらを渡すかが判定の分かれ目になるので、引数は必須キーワードにしてある。
+
+    点推定だけでは「検知できない」と言えない。失敗が数十本しかなければ真の値が
+    0.65 でも 0.48 は普通に出る。**区間を出して初めて実用水準を排除できる**
+    (`docs/design.md` 10.16 節)。
+
+    Args:
+        auroc: 点推定 (`detection_auroc` の戻り値)。
+        n_positive: 陽性の有効標本数 (通常は失敗エピソード数)。
+        n_negative: 陰性の有効標本数 (通常は成功エピソード数)。
+        z: 正規近似の分位点。既定は 95% 区間。
+
+    Returns:
+        ``(下限, 上限)``。``[0, 1]` に丸める。
+
+    Raises:
+        ValueError: `auroc` が `[0, 1]` の外、標本数が 1 未満、または `z` が負。
+    """
+    if not 0.0 <= auroc <= 1.0:
+        raise ValueError(f"auroc: [0, 1] の範囲が必要です (actual={auroc})")
+    if n_positive < 1 or n_negative < 1:
+        raise ValueError(
+            "有効標本数は両クラスとも 1 以上が必要です "
+            f"(n_positive={n_positive}, n_negative={n_negative})"
+        )
+    if z < 0.0:
+        raise ValueError(f"z: 0 以上が必要です (actual={z})")
+
+    q1 = auroc / (2.0 - auroc)
+    q2 = 2.0 * auroc * auroc / (1.0 + auroc)
+    variance = (
+        auroc * (1.0 - auroc)
+        + (n_positive - 1) * (q1 - auroc * auroc)
+        + (n_negative - 1) * (q2 - auroc * auroc)
+    ) / (n_positive * n_negative)
+    margin = z * math.sqrt(max(variance, 0.0))
+    return (max(0.0, auroc - margin), min(1.0, auroc + margin))
