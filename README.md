@@ -310,6 +310,8 @@ scripts/
 
 ## Documentation
 
+- [`docs/architecture.md`](docs/architecture.md) — layer diagram and data flow, drawn
+  from the actual imports; where each ablation switch sits
 - [`docs/design.md`](docs/design.md) — design document, including every measurement that
   changed a decision
 - [`docs/plans/`](docs/plans/) — approved implementation specs per sprint
