@@ -38,7 +38,7 @@ from typing import Final, Literal
 
 from esn_vla_uq.diagnostics.esp import EspResult
 from esn_vla_uq.diagnostics.memory_capacity import (
-    MEMORY_CAPACITY_INPUT_DIM,
+    DEFAULT_MC_INPUT_CHANNEL,
     MemoryCapacityResult,
 )
 from esn_vla_uq.esn.config import ESNConfig
@@ -50,10 +50,17 @@ logger = logging.getLogger(__name__)
 REPORT_SCHEMA_VERSION: Final[str] = "0.3.0"
 """診断レポート JSON のスキーマバージョン。
 
-0.3.0 での変更: `esn_config` に `use_reservoir` が加わった (read-out の設計行列に
-リザバー状態を載せるか。`docs/next-research-directions.md` ①)。診断そのものは
-read-out を使わないためこの値で数値は変わらないが、`esn_config` は
-`ESNConfig` 全フィールドを機械的に写す契約 (A2) なので追加は現れる。
+0.3.0 での変更は 2 つ。
+
+1. `esn_config` に `use_reservoir` が加わった (read-out の設計行列にリザバー状態を
+   載せるか。`docs/next-research-directions.md` ①)。診断そのものは read-out を
+   使わないためこの値で数値は変わらないが、`esn_config` は `ESNConfig` 全フィールド
+   を機械的に写す契約 (A2) なので追加は現れる。
+2. `memory_capacity` を `spectral`/`esp` と**同じリザバー**で測るようにし、
+   `input_channel` を記録するようにした。**`--n-inputs != 1` では測定値が変わる**
+   (以前は `D_u=1` の別リザバーで測っていた。`n_inputs` が違えば `W` まで別物に
+   なるため、同じレポートに別のリザバーの数値が並んでいた)。`--n-inputs 1`
+   (既定) では `input_channel=0` が唯一の列なので数値は変わらない。
 
 0.2.0 での変更: `memory_capacity` の測定コンテキスト (`n_inputs` / `reservoir`)
 を `memory_capacity` オブジェクトの内側へ移し、トップレベルの
@@ -95,32 +102,32 @@ class MemoryCapacityMeasurement:
 
     Attributes:
         result: `linear_memory_capacity` の測定結果。
-        n_inputs: 測定に使ったリザバーの入力次元 `D_u`
-            (`MEMORY_CAPACITY_INPUT_DIM` に固定)。
+        n_inputs: 測定に使ったリザバーの入力次元 `D_u`。
+        input_channel: スカラー駆動信号を流した入力チャンネル。`D_u > 1` の
+            リザバーでは、どの列から信号を入れたかで測定値が変わる
+            (列ごとに `W_in` が違うため)。**どの列で測ったかを残さないと
+            数値を再現できない。**
 
-    `n_inputs` は `run_diagnostics` からは常に `MEMORY_CAPACITY_INPUT_DIM` で
-    構築されるため整合するが、この型自体は `diagnostics/__init__.py` で公開
-    エクスポートされており、外部から単体で組み立てられうる。
-    `linear_memory_capacity` の契約上 `n_inputs != MEMORY_CAPACITY_INPUT_DIM`
-    はそもそも測定条件として無効であり、`reservoir_label` は「同じ文脈で
-    正しく組み立てられている」ことに暗黙に依存して "shared"/"separate" を
-    返す。呼び出し側が誤った `n_inputs` を渡すと、実際には測定していない
-    次元のリザバーと同じ/別扱いされた嘘のラベルを出しうるため、
-    `__post_init__` でこの契約を型ではなく実行時に強制する
-    (`reservoir_label` を廃して `reservoir: Literal["shared","separate"]` を
-    フィールド化する代替案もあったが、`n_inputs` 自体を検証するほうが
-    `MemoryCapacityResult` との対応が直接的で、既存の呼び出し側
-    (`run_diagnostics`/`_memory_capacity_to_dict`) の変更が不要なため採用した)。
+    `run_diagnostics` は `spectral`/`esp` と**同じリザバー**で測るため
+    `n_inputs` はレポートの `n_inputs` と一致し、`reservoir_label` は常に
+    "shared" になる。以前は `D_u=1` のリザバーを別に建てて測っており、
+    `--n-inputs != 1` のときに**別のリザバーの数値**をレポートに並べていた
+    (`W_in`/`b` だけでなく `W` も別物になる。`esn/reservoir.py`)。
+    この型は `diagnostics/__init__.py` で公開されており外部から単体でも
+    組み立てられるため、"separate" のラベル自体は残してある。
     """
 
     result: MemoryCapacityResult
     n_inputs: int
+    input_channel: int = DEFAULT_MC_INPUT_CHANNEL
 
     def __post_init__(self) -> None:
-        if self.n_inputs != MEMORY_CAPACITY_INPUT_DIM:
+        if self.n_inputs < 1:
+            raise ValueError(f"n_inputs: 1 以上が必要です (actual={self.n_inputs})")
+        if not 0 <= self.input_channel < self.n_inputs:
             raise ValueError(
-                "n_inputs: メモリ容量測定はスカラー入力のみ対応します "
-                f"(actual={self.n_inputs}, expected={MEMORY_CAPACITY_INPUT_DIM})"
+                "input_channel: 入力次元の範囲内が必要です "
+                f"(actual={self.input_channel}, n_inputs={self.n_inputs})"
             )
 
     def reservoir_label(self, report_n_inputs: int) -> Literal["shared", "separate"]:
@@ -142,6 +149,7 @@ class MemoryCapacityMeasurement:
         return {
             **self.result.to_dict(),
             "n_inputs": self.n_inputs,
+            "input_channel": self.input_channel,
             "reservoir": self.reservoir_label(report_n_inputs),
         }
 
@@ -175,10 +183,10 @@ class DiagnosticsReport:
             生成するため、この値を記録しないとスペクトル半径・ESP の数値が
             どのリザバーのものか事後に再現できない。
         memory_capacity: メモリ容量の測定結果と測定コンテキスト
-            (`MemoryCapacityMeasurement`)。メモリ容量診断は仕様上スカラー入力
-            (`D_u=1`) を要求するため、`n_inputs != 1` のときは `spectral`/
-            `esp` を計算したリザバーとは **別の** `D_u=1` リザバーで測って
-            いる。`--skip-memory-capacity` 指定時は `None`。
+            (`MemoryCapacityMeasurement`)。**`spectral`/`esp` と同じリザバー**で
+            測る。駆動信号はスカラーである必要があるので、`D_u > 1` のときは
+            `input_channel` の列だけに信号を流す。`--skip-memory-capacity`
+            指定時は `None`。
     """
 
     schema_version: str
