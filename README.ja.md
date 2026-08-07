@@ -296,6 +296,8 @@ scripts/
 
 ## ドキュメント
 
+- [`docs/architecture.md`](docs/architecture.md) — レイヤ図とデータフロー。実際の
+  import から起こしたもの。アブレーションの分岐点がどこにあるかも図にしています
 - [`docs/design.md`](docs/design.md) — 設計書。判断を変えた実測値をすべて記録しています
 - [`docs/plans/`](docs/plans/) — スプリントごとの承認済み仕様書
 - [`docs/next-research-directions.md`](docs/next-research-directions.md) — 次に何を測り、
