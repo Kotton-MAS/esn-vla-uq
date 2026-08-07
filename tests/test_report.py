@@ -63,6 +63,7 @@ MEMORY_CAPACITY_KEYS = (
     "n_delays",
     "per_delay",
     "n_inputs",
+    "input_channel",
     "reservoir",
 )
 
@@ -106,42 +107,40 @@ def test_memory_capacity_n_inputs_is_none_when_skipped(config: ESNConfig) -> Non
     assert report.memory_capacity is None
 
 
-def test_memory_capacity_uses_separate_reservoir_when_n_inputs_not_one(
+def test_memory_capacity_uses_the_same_reservoir_as_spectral(
     config: ESNConfig,
 ) -> None:
-    # n_inputs != 1 のとき、spectral/esp のリザバー (D_u=n_inputs) とは別の
-    # D_u=1 リザバーでメモリ容量を測る。同一 seed でも n_inputs が違えば
-    # 別の行列になるため (docs/design.md 3.3 節)、独立に構築した D_u=1
-    # リザバーでの測定結果と一致するはずである。
+    # `n_inputs != 1` でも spectral/esp と同じリザバーでメモリ容量を測る。
+    # 以前は D_u=1 の別リザバーで測っており、同じ seed でも n_inputs が違えば
+    # W まで別物になるため (docs/design.md 3.3 節)、1 つのレポートに別々の
+    # リザバーの数値が並んでいた (docs/next-research-directions.md ②)。
     n_inputs = 3
     report = run_diagnostics(config, n_inputs=n_inputs, seed=0)
     assert report.n_inputs == n_inputs
     assert report.memory_capacity is not None
-    assert report.memory_capacity.n_inputs == 1
-    assert report.memory_capacity.reservoir_label(report.n_inputs) == "separate"
+    assert report.memory_capacity.n_inputs == n_inputs
+    assert report.memory_capacity.reservoir_label(report.n_inputs) == "shared"
 
-    reference_reservoir = Reservoir(config, 1)
-    reference = linear_memory_capacity(reference_reservoir, seed=0)
+    main_reservoir = Reservoir(config, n_inputs)
+    reference = linear_memory_capacity(main_reservoir, seed=0, input_channel=0)
     assert report.memory_capacity.result == reference
 
-    # spectral/esp が D_u=n_inputs のリザバーを見ていることの裏付け。
-    main_reservoir = Reservoir(config, n_inputs)
+    # spectral/esp も同じリザバーを見ている。
     assert report.spectral.spectral_radius == pytest.approx(
         spectral_radius(main_reservoir.W)
     )
 
 
-def test_memory_capacity_measurement_rejects_non_scalar_n_inputs() -> None:
+def test_memory_capacity_measurement_rejects_channel_outside_inputs() -> None:
     # `MemoryCapacityMeasurement` は `diagnostics/__init__.py` で公開エクス
     # ポートされており、`run_diagnostics` を介さず単体で組み立てられる。
-    # `linear_memory_capacity` の契約上 n_inputs は MEMORY_CAPACITY_INPUT_DIM
-    # (=1) 以外を取れないため、それ以外を渡すと嘘の reservoir_label を出せて
-    # しまう (元 finding)。構築時点で ValueError にする。
+    # 入力次元の外のチャンネルを記録すると、再現できない測定条件を書いた
+    # レポートが出る。構築時点で ValueError にする。
     dummy_result = MemoryCapacityResult(
         total_mc=0.0, per_delay=[0.0], memory_horizon=1, mc_per_neuron=0.0
     )
-    with pytest.raises(ValueError, match="n_inputs"):
-        MemoryCapacityMeasurement(result=dummy_result, n_inputs=2)
+    with pytest.raises(ValueError, match="input_channel"):
+        MemoryCapacityMeasurement(result=dummy_result, n_inputs=2, input_channel=2)
 
 
 def test_to_dict_contains_all_sections(report: DiagnosticsReport) -> None:
@@ -163,6 +162,7 @@ def test_to_dict_contains_all_sections(report: DiagnosticsReport) -> None:
         "ridge_alpha",
         "washout",
         "input_passthrough",
+        "use_reservoir",
         "seed",
     }
 
@@ -317,12 +317,12 @@ def test_cli_diagnose_accepts_n_inputs(tmp_path: Path) -> None:
     report_path = next((tmp_path / REPORT_SUBDIR).glob("*.json"))
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert payload["n_inputs"] == 8
-    # メモリ容量診断は D_u=1 を要求するため、report 全体の n_inputs (8) とは
-    # 別のリザバーで測定したことが memory_capacity オブジェクト自身から
-    # 自己記述的に分かる (M1)。
+    # メモリ容量も同じリザバー (D_u=8) で測る。駆動信号はスカラーのままで、
+    # どの列に流したかが input_channel として自己記述的に残る。
     memory_capacity_section = _section(payload, "memory_capacity")
-    assert memory_capacity_section["n_inputs"] == 1
-    assert memory_capacity_section["reservoir"] == "separate"
+    assert memory_capacity_section["n_inputs"] == 8
+    assert memory_capacity_section["input_channel"] == 0
+    assert memory_capacity_section["reservoir"] == "shared"
 
 
 def _section(payload: dict[str, object], key: str) -> dict[str, object]:

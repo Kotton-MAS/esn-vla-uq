@@ -43,7 +43,22 @@ DEFAULT_MC_SEED: Final[int] = 0
 """
 
 MEMORY_CAPACITY_INPUT_DIM: Final[int] = 1
-"""メモリ容量診断はスカラー入力 (``D_u = 1``) で行う。"""
+"""メモリ容量診断の既定の入力次元 (``D_u = 1``)。
+
+**リザバーの入力次元がこれである必要は無い。** 定義が要求するのは「駆動信号が
+スカラーの i.i.d. であること」であって、リザバーの `W_in` が何列あるかではない。
+`D_u > 1` のリザバーに対しては ``input_channel`` の 1 本だけにスカラーを流し、
+残りを 0 にして測る (`linear_memory_capacity`)。
+
+**なぜこれが要るのか。** `Reservoir` は `W_in -> b -> W` の順に同一 RNG から
+引くため、同じ `seed` でも `n_inputs` が違えば **`W` まで別の行列**になる
+(`esn/reservoir.py`)。`D_u=1` のリザバーで測った MC は、較正で実際に使う
+`D_u=17` のリザバーの記憶ではない。診断値と較正性能を突き合わせるには
+**同じリザバーで測る**必要がある (`docs/next-research-directions.md` ②)。
+"""
+
+DEFAULT_MC_INPUT_CHANNEL: Final[int] = 0
+"""スカラー駆動信号を流す入力チャンネルの既定値。"""
 
 DEFAULT_MC_N_TRAIN: Final[int] = 3000
 """read-out 学習に使うステップ数。"""
@@ -124,15 +139,18 @@ def _squared_correlation(
 
 
 def _delayed_targets(
-    inputs: NDArray[np.float64], max_delay: int
+    inputs: NDArray[np.float64], max_delay: int, channel: int
 ) -> NDArray[np.float64]:
     """``targets[t, k - 1] = u[t - k]`` の行列 `[T, K]` を作る。
 
     ``t < k`` の区間には過去が無いため 0 を置く。学習・評価はいずれも先頭
     ``washout >= K`` ステップを除いた区間で行うため、この区間は参照されない。
+
+    `inputs` は `[T, D_u]` で、駆動信号が入っているのは ``channel`` の列だけ
+    (他は 0)。目標はその列の遅延である。
     """
     n_steps = inputs.shape[0]
-    flat = inputs[:, 0]
+    flat = inputs[:, channel]
     targets = np.zeros((n_steps, max_delay), dtype=np.float64)
     for delay in range(1, max_delay + 1):
         targets[delay:, delay - 1] = flat[:-delay]
@@ -176,29 +194,38 @@ def linear_memory_capacity(
     max_delay: int | None = None,
     ridge_alpha: float = DEFAULT_MC_RIDGE_ALPHA,
     seed: int = DEFAULT_MC_SEED,
+    input_channel: int = DEFAULT_MC_INPUT_CHANNEL,
 ) -> MemoryCapacityResult:
     """線形メモリ容量を測定する。
 
+    駆動信号はスカラーである (定義の要求)。リザバーの入力次元が 1 より大きい
+    ときは ``input_channel`` の列だけにその信号を流し、残りの列は 0 にする。
+    **測っているのはそのリザバーの `W` が持つ記憶であり、`input_channel` 以外の
+    列の `W_in` は結果に関与しない。** 較正では 17 列すべてに信号が入るので、
+    実運用の動作点そのものではない点に注意する
+    (`docs/next-research-directions.md` ②)。
+
     Args:
-        reservoir: 診断対象のリザバー。``n_inputs == 1`` である必要がある。
+        reservoir: 診断対象のリザバー。入力次元に制限は無い。
         n_train: read-out 学習に使うステップ数。
         n_test: ``MC_k`` の評価に使うステップ数。
         washout: 先頭で捨てる過渡区間の長さ (``max_delay`` 以上)。
         max_delay: 最大遅延 K。省略時は ``min(2 * N, 200)``。
         ridge_alpha: 診断専用の微小リッジ係数 (既定 ``1e-8``)。
         seed: 入力系列を生成する `np.random.default_rng` の種。
+        input_channel: スカラー信号を流す入力チャンネル。
 
     Returns:
         `MemoryCapacityResult`。
 
     Raises:
-        ValueError: リザバーの入力次元が 1 でない、またはパラメータが範囲外の場合。
+        ValueError: `input_channel` がリザバーの入力次元の範囲外、または
+            パラメータが範囲外の場合。
     """
-    if reservoir.n_inputs != MEMORY_CAPACITY_INPUT_DIM:
+    if not 0 <= input_channel < reservoir.n_inputs:
         raise ValueError(
-            "メモリ容量診断はスカラー入力のリザバーが必要です "
-            f"(期待: n_inputs={MEMORY_CAPACITY_INPUT_DIM}, "
-            f"実値: {reservoir.n_inputs})"
+            "input_channel はリザバーの入力次元の範囲内である必要があります "
+            f"(実値: {input_channel}, n_inputs: {reservoir.n_inputs})"
         )
     delays = (
         default_max_delay(reservoir.n_reservoir) if max_delay is None else max_delay
@@ -213,9 +240,12 @@ def linear_memory_capacity(
 
     rng = np.random.default_rng(seed)
     n_steps = washout + n_train + n_test
-    inputs = rng.uniform(INPUT_LOW, INPUT_HIGH, size=(n_steps, 1))
+    # 駆動信号はスカラー。`input_channel` 以外の列は 0 に保つ (定義どおり
+    # 1 本の i.i.d. 信号だけでリザバーを駆動する)。
+    inputs = np.zeros((n_steps, reservoir.n_inputs), dtype=np.float64)
+    inputs[:, input_channel] = rng.uniform(INPUT_LOW, INPUT_HIGH, size=n_steps)
     states = reservoir.run(inputs)
-    targets = _delayed_targets(inputs, delays)
+    targets = _delayed_targets(inputs, delays, input_channel)
 
     train = slice(washout, washout + n_train)
     test = slice(washout + n_train, n_steps)

@@ -159,6 +159,7 @@ class SplitConformalPredictor:
         readout = RidgeReadout(
             alpha=self.config.ridge_alpha,
             input_passthrough=self.config.input_passthrough,
+            use_states=self.config.use_reservoir,
         )
         readout.fit(states, inputs, targets)
         residuals = targets - readout.predict(states, inputs)
@@ -274,21 +275,38 @@ class SplitConformalPredictor:
         """リザバー状態・入力・目標を、washout 適用後に連結して返す。
 
         リザバーはエピソード境界で初期化する (`run_episodes`)。
+
+        `ESNConfig.use_reservoir=False` (リザバー無し baseline) のときは
+        **リザバーを構築も駆動もしない。** 状態の代わりに列数 0 の `[T, 0]` を
+        返す。read-out もスコアモデルも状態を使わないので、`O(T N^2)` の駆動が
+        丸ごと不要になる。形だけ合わせておけば下流は分岐しなくて済む。
         """
         if not samples:
             raise ValueError("samples: 1 件以上必要です")
         segments = input_segments(samples)
-        reservoir = self._ensure_reservoir(segments[0].shape[1])
-        states = run_episodes(reservoir, segments)
         inputs = np.concatenate(segments, axis=0)
+        if self.config.use_reservoir:
+            reservoir = self._ensure_reservoir(segments[0].shape[1])
+            states = run_episodes(reservoir, segments)
+        else:
+            states = np.zeros((inputs.shape[0], 0), dtype=np.float64)
         targets = stack_targets(samples)
         if self.washout == 0:
             return states, inputs, targets
-        keep = self._washout_mask(samples)
+        keep = self.retained_mask(samples)
         return states[keep], inputs[keep], targets[keep]
 
-    def _washout_mask(self, samples: Sequence[EpisodeSamples]) -> NDArray[np.bool_]:
-        """区間ごとに先頭 `washout` 標本を落とすマスクを作る。"""
+    def retained_mask(self, samples: Sequence[EpisodeSamples]) -> NDArray[np.bool_]:
+        """washout 適用後に残る標本を示す `[N]` を返す。
+
+        **区間ごとに先頭 `washout` 標本を落とす。** `washout=0` なら全て True。
+
+        呼び出し側が標本と行を対応させたい配列 (失敗検知のラベルなど) を持って
+        いるときは、それにこのマスクを掛ける必要がある。`predict_intervals` の
+        戻り値は washout 後の行数であり、`targets.detection_labels` が返す
+        ラベルは washout 前の行数である。**両者を突き合わせる前に揃えないと、
+        長さが違えば例外、たまたま同じなら黙って別のステップと突き合わせる。**
+        """
         masks: list[NDArray[np.bool_]] = []
         for sample in samples:
             mask = np.ones(sample.n_samples, dtype=np.bool_)

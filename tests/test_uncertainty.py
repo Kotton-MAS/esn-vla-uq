@@ -17,6 +17,7 @@ from esn_vla_uq.uncertainty import (
     split_samples,
     stack_failure_labels,
 )
+from esn_vla_uq.uncertainty.targets import detection_labels
 
 N_RESERVOIR = 60
 N_EPISODES = 24
@@ -403,3 +404,89 @@ def test_detection_auroc_is_invariant_to_the_difficulty_spread(
         scores.append(detection_auroc(intervals.uncertainty, labels))
 
     assert scores[0] == pytest.approx(scores[1], abs=1e-12)
+
+
+# --- リザバーの寄与のアブレーション (docs/next-research-directions.md ①) ------
+
+
+def test_baseline_without_reservoir_does_not_build_one(
+    dataset: RolloutDataset,
+) -> None:
+    """`use_reservoir=False` ではリザバーを構築も駆動もしないこと。
+
+    幅の比較のために baseline を回すのに `O(T N^2)` を払う必要は無い。状態は
+    列数 0 の `[T, 0]` で代用する。
+    """
+    baseline = ESNConfig(n_reservoir=N_RESERVOIR, seed=0, use_reservoir=False)
+    split = split_samples(build_samples(dataset), seed=0)
+    predictor = SplitConformalPredictor(baseline)
+    states, inputs, _targets = predictor._design(split.fit)
+
+    assert states.shape == (inputs.shape[0], 0)
+    assert predictor._reservoir is None
+
+
+def test_baseline_without_reservoir_produces_usable_intervals(
+    dataset: RolloutDataset,
+) -> None:
+    """baseline でも fit -> calibrate -> predict が一通り通ること。"""
+    baseline = ESNConfig(n_reservoir=N_RESERVOIR, seed=0, use_reservoir=False)
+    split = split_samples(build_samples(dataset), seed=0)
+    predictor = SplitConformalPredictor(baseline).fit(split.fit)
+    predictor.calibrate(split.calibrate)
+    intervals = predictor.predict_intervals(split.test)
+    targets = predictor.stacked_targets(split.test)
+
+    assert intervals.predicted.shape == targets.shape
+    assert np.all(np.isfinite(intervals.half_width))
+    assert np.all(intervals.lower <= intervals.upper)
+
+
+def test_baseline_and_reservoir_predictions_differ(
+    dataset: RolloutDataset, config: ESNConfig
+) -> None:
+    """アブレーションが実際に別のモデルを作っていること。
+
+    ここが同一になるなら、区間幅を比べても条件間の差は測れない。
+    """
+    baseline = ESNConfig(n_reservoir=N_RESERVOIR, seed=0, use_reservoir=False)
+    split = split_samples(build_samples(dataset), seed=0)
+
+    predictions = []
+    for candidate in (config, baseline):
+        predictor = SplitConformalPredictor(candidate).fit(split.fit)
+        predictor.calibrate(split.calibrate)
+        predictions.append(predictor.predict_intervals(split.test).predicted)
+
+    assert not np.allclose(predictions[0], predictions[1])
+
+
+def test_retained_mask_matches_the_rows_of_predict_intervals(
+    dataset: RolloutDataset, config: ESNConfig
+) -> None:
+    """washout 後の行数とマスクの True 数が一致すること。
+
+    ここがずれると、失敗検知のラベルを区間と突き合わせるときに**長さが同じなら
+    黙って別のステップと比較する**。`calibration/runner.py` がこのマスクで
+    ラベルを揃えている。
+    """
+    washout = 20
+    split = split_samples(build_samples(dataset), seed=0)
+    predictor = SplitConformalPredictor(config, washout=washout).fit(split.fit)
+    predictor.calibrate(split.calibrate)
+
+    mask = predictor.retained_mask(split.test)
+    intervals = predictor.predict_intervals(split.test)
+    labels, _kind = detection_labels(split.test)
+
+    assert mask.shape == labels.shape
+    assert int(mask.sum()) == intervals.uncertainty.shape[0]
+    assert int(mask.sum()) == sum(s.n_samples - washout for s in split.test)
+
+
+def test_retained_mask_is_all_true_without_washout(
+    dataset: RolloutDataset, config: ESNConfig
+) -> None:
+    split = split_samples(build_samples(dataset), seed=0)
+    mask = SplitConformalPredictor(config).retained_mask(split.test)
+    assert mask.all()

@@ -4,8 +4,16 @@
 (`np.linalg.inv` は使わない)。`P` はバイアス列に対応する対角成分だけ 0 とした
 単位行列であり、これによりバイアス項は正則化の対象外となる。
 
-設計行列 `X` は `input_passthrough=True` (既定) のとき `[1, u, x]`、
-`False` のとき `[1, x]`。
+設計行列 `X` は `input_passthrough` と `use_states` の組で決まる。
+
+| `input_passthrough` | `use_states` | 設計行列    |
+| ------------------- | ------------ | ----------- |
+| True (既定)         | True (既定)  | `[1, u, x]` |
+| False               | True         | `[1, x]`    |
+| True                | False        | `[1, u]`    |
+
+``use_states=False`` はリザバー無しの baseline (`ESNConfig.use_reservoir`) を
+作るためにある。両方を False にすると設計行列がバイアス列だけになるので拒否する。
 """
 
 from __future__ import annotations
@@ -23,11 +31,23 @@ BIAS_COLUMN_INDEX = 0
 class RidgeReadout:
     """リッジ回帰 read-out (バイアス項は非正則化)。"""
 
-    def __init__(self, alpha: float, *, input_passthrough: bool = True) -> None:
+    def __init__(
+        self,
+        alpha: float,
+        *,
+        input_passthrough: bool = True,
+        use_states: bool = True,
+    ) -> None:
         if alpha < 0.0:
             raise ValueError(f"alpha は 0 以上である必要があります (実値: {alpha})")
+        if not input_passthrough and not use_states:
+            raise ValueError(
+                "input_passthrough と use_states を同時に False にはできません "
+                "(設計行列がバイアス列だけになります)"
+            )
         self.alpha = float(alpha)
         self.input_passthrough = input_passthrough
+        self.use_states = use_states
         self._w_out: NDArray[np.float64] | None = None
 
     @property
@@ -46,20 +66,26 @@ class RidgeReadout:
 
     def n_features(self, n_inputs: int, n_reservoir: int) -> int:
         """設計行列の列数を返す。"""
+        n = 1
         if self.input_passthrough:
-            return 1 + n_inputs + n_reservoir
-        return 1 + n_reservoir
+            n += n_inputs
+        if self.use_states:
+            n += n_reservoir
+        return n
 
     def design_matrix(
         self, states: NDArray[np.float64], inputs: NDArray[np.float64]
     ) -> NDArray[np.float64]:
         """設計行列を組み立てる。
 
-        `input_passthrough` が真なら `[1, u, x]`、偽なら `[1, x]`。先頭列は
+        `input_passthrough` と `use_states` の組で `[1, u, x]` / `[1, x]` /
+        `[1, u]` のいずれかになる (モジュール docstring の表)。先頭列は
         バイアス項で、リッジ罰則の対象外にする (`fit` 参照)。
 
         Args:
-            states: リザバー状態 `[T, N]`。
+            states: リザバー状態 `[T, N]`。``use_states=False`` のときは列数 0 の
+                `[T, 0]` を渡してよい (リザバーを駆動しない baseline のため)。
+                系列長の検証には使うので形は必要である。
             inputs: 入力系列 `[T, D_u]`。
 
         Returns:
@@ -76,7 +102,11 @@ class RidgeReadout:
                 f"(states: {x.shape[0]}, inputs: {u.shape[0]})"
             )
         ones = np.ones((x.shape[0], 1), dtype=np.float64)
-        blocks = [ones, u, x] if self.input_passthrough else [ones, x]
+        blocks = [ones]
+        if self.input_passthrough:
+            blocks.append(u)
+        if self.use_states:
+            blocks.append(x)
         return np.concatenate(blocks, axis=1)
 
     def fit(

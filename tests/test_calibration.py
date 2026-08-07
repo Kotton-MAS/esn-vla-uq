@@ -11,6 +11,7 @@ import pytest
 from esn_vla_uq.calibration import (
     ECE_DEFINITION,
     ReliabilityCurve,
+    auroc_confidence_interval,
     conformal_coverage,
     detection_auroc,
     rank_data,
@@ -262,6 +263,78 @@ def test_cli_calibrate_writes_a_report(tmp_path: Path) -> None:
     assert payload["split"]["strategy"] == "within_task"
 
 
+def test_cli_readout_ablation_is_recorded_in_the_report(tmp_path: Path) -> None:
+    """`--readout input_only` がリザバー無し baseline としてレポートに残ること。
+
+    幅を条件間で比べるとき、レポート単体でどの条件の数値か分かる必要がある
+    (`docs/next-research-directions.md` ①)。
+    """
+    exit_code = main(
+        [
+            "calibrate",
+            "--output-dir",
+            str(tmp_path),
+            "--n-reservoir",
+            str(N_RESERVOIR),
+            "--n-splits",
+            "2",
+            "--readout",
+            "input_only",
+        ]
+    )
+    assert exit_code == 0
+    payload = json.loads(
+        next((tmp_path / REPORT_SUBDIR).glob("*.json")).read_text(encoding="utf-8")
+    )
+    assert payload["esn_config"]["use_reservoir"] is False
+    assert payload["esn_config"]["input_passthrough"] is True
+    assert payload["coverage"]["mean_interval_width"] > 0.0
+    # 条件間で幅を比べるには散らばりが要る (差が誤差の内かを判定できない)。
+    assert payload["coverage"]["std_interval_width"] >= 0.0
+    # 対応のある差を取るために分割ごとの幅も残す。
+    assert len(payload["coverage"]["per_split_interval_width"]) == 2
+
+
+def test_cli_washout_reaches_the_predictor(tmp_path: Path) -> None:
+    """`--washout` が実際に標本を減らし、レポートに残ること。
+
+    `esn_config.washout` は `ESN.fit` 用で較正経路では使われない。どちらの値で
+    評価したのかをレポート単体で読めないと、数値の出所を取り違える。
+    """
+    payloads = []
+    for washout in (0, 20):
+        output_dir = tmp_path / f"w{washout}"
+        exit_code = main(
+            [
+                "calibrate",
+                "--output-dir",
+                str(output_dir),
+                "--n-reservoir",
+                str(N_RESERVOIR),
+                "--n-splits",
+                "2",
+                "--washout",
+                str(washout),
+            ]
+        )
+        assert exit_code == 0
+        payloads.append(
+            json.loads(
+                next((output_dir / REPORT_SUBDIR).glob("*.json")).read_text(
+                    encoding="utf-8"
+                )
+            )
+        )
+
+    assert payloads[0]["conformal"]["washout"] == 0
+    assert payloads[1]["conformal"]["washout"] == 20
+    # 各エピソードの先頭 20 標本が落ちるのでテスト標本は必ず減る。
+    assert (
+        payloads[1]["coverage"]["n_test_samples"]
+        < payloads[0]["coverage"]["n_test_samples"]
+    )
+
+
 def test_cli_calibrate_writes_the_diagram_when_requested(tmp_path: Path) -> None:
     exit_code = main(
         [
@@ -349,3 +422,46 @@ def test_detection_is_always_marked_exploratory(report: CalibrationReport) -> No
     from esn_vla_uq.calibration.runner import DETECTION_IS_EXPLORATORY_CAVEAT
 
     assert DETECTION_IS_EXPLORATORY_CAVEAT in report.caveats
+
+
+# --- AUROC の区間 (docs/design.md 14 節の判定規則) ------------------------------
+
+
+def test_auroc_interval_brackets_the_point_estimate() -> None:
+    low, high = auroc_confidence_interval(0.5, n_positive=63, n_negative=287)
+    assert low < 0.5 < high
+
+
+def test_auroc_interval_narrows_with_more_samples() -> None:
+    """標本が増えれば区間は狭くなる。"""
+    small = auroc_confidence_interval(0.5, n_positive=10, n_negative=50)
+    large = auroc_confidence_interval(0.5, n_positive=100, n_negative=500)
+    assert (large[1] - large[0]) < (small[1] - small[0])
+
+
+def test_auroc_interval_is_clipped_to_the_unit_range() -> None:
+    low, high = auroc_confidence_interval(0.99, n_positive=3, n_negative=3)
+    assert low >= 0.0
+    assert high <= 1.0
+
+
+def test_auroc_interval_reproduces_the_recorded_dropped_result() -> None:
+    """10.16 節の `dropped` の区間を再現する (失敗 63 / 成功 287)。
+
+    有効標本数に**エピソード数**を使うことがこの数値の前提である。ステップ数を
+    渡すと区間が桁違いに狭く出る。
+    """
+    low, high = auroc_confidence_interval(0.469, n_positive=63, n_negative=287)
+    assert low == pytest.approx(0.382, abs=0.01)
+    assert high == pytest.approx(0.556, abs=0.01)
+    # 実用水準 0.6 を排除できる。
+    assert high < 0.6
+
+
+def test_auroc_interval_rejects_invalid_inputs() -> None:
+    with pytest.raises(ValueError, match="auroc"):
+        auroc_confidence_interval(1.5, n_positive=10, n_negative=10)
+    with pytest.raises(ValueError, match="有効標本数"):
+        auroc_confidence_interval(0.5, n_positive=0, n_negative=10)
+    with pytest.raises(ValueError, match="z"):
+        auroc_confidence_interval(0.5, n_positive=10, n_negative=10, z=-1.0)

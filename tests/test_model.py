@@ -170,6 +170,29 @@ def test_input_passthrough_flag_is_forwarded_to_readout() -> None:
     assert ESN(ESNConfig(input_passthrough=False)).readout.input_passthrough is False
 
 
+def test_use_reservoir_flag_is_forwarded_to_readout() -> None:
+    assert ESN(ESNConfig()).readout.use_states is True
+    assert ESN(ESNConfig(use_reservoir=False)).readout.use_states is False
+
+
+def test_delay_task_without_reservoir_fails_to_learn() -> None:
+    """リザバー無し baseline は遅延課題を解けない (アブレーションの健全性)。
+
+    目標が `u[t-delay]` である課題で `[1, u[t]]` からは復元できない。ここが
+    通ってしまうと、区間幅の比較で「リザバーが要らない」と読める結果が出ても
+    アブレーションが効いていないだけ、という可能性を排除できない。
+    """
+    config = dataclasses.replace(DELAY_TASK_CONFIG, use_reservoir=False)
+    rng = np.random.default_rng(123)
+    train_inputs, train_targets = _delay_task(N_TRAIN, rng)
+    test_inputs, test_targets = _delay_task(N_TEST, rng)
+
+    model = ESN(config).fit(train_inputs, train_targets)
+    predictions = model.predict(test_inputs)
+    washout = config.washout
+    assert _nrmse(predictions[washout:], test_targets[washout:]) > NRMSE_THRESHOLD
+
+
 def test_fit_rejects_washout_longer_than_sequence(
     inputs: NDArray[np.float64], targets: NDArray[np.float64]
 ) -> None:

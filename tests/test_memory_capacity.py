@@ -151,9 +151,33 @@ def test_squared_correlation_is_zero_for_constant_series() -> None:
     assert _squared_correlation(varying, varying) == pytest.approx(1.0, rel=1e-12)
 
 
-def test_rejects_multi_dimensional_input_reservoir() -> None:
-    with pytest.raises(ValueError, match="n_inputs"):
-        linear_memory_capacity(_reservoir(SMALL_N, n_inputs=2))
+def test_measures_a_multi_input_reservoir_through_one_channel() -> None:
+    """`D_u > 1` のリザバーでも測れること (較正と同じリザバーで測るため)。
+
+    駆動信号はスカラーのままで、`input_channel` の列にだけ流す。
+    """
+    result = linear_memory_capacity(_reservoir(SMALL_N, n_inputs=3))
+    assert result.total_mc > 0.0
+    # 理論上界は N のまま (設計行列に生入力を入れていないため)。
+    assert result.total_mc <= SMALL_N
+
+
+def test_input_channel_changes_the_measurement() -> None:
+    """どの列から信号を入れるかで値が変わること。
+
+    列ごとに `W_in` が違うので同じ `W` でも記憶の見え方が変わる。**どの列で
+    測ったかを記録しないと数値を再現できない**ことの裏付け。
+    """
+    reservoir = _reservoir(SMALL_N, n_inputs=3)
+    first = linear_memory_capacity(reservoir, input_channel=0)
+    second = linear_memory_capacity(reservoir, input_channel=2)
+    assert first.total_mc != second.total_mc
+
+
+@pytest.mark.parametrize("channel", [-1, 3])
+def test_rejects_input_channel_outside_the_reservoir(channel: int) -> None:
+    with pytest.raises(ValueError, match="input_channel"):
+        linear_memory_capacity(_reservoir(SMALL_N, n_inputs=3), input_channel=channel)
 
 
 def test_rejects_washout_shorter_than_max_delay() -> None:

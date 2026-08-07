@@ -24,7 +24,7 @@ import numpy as np
 from esn_vla_uq import __version__
 from esn_vla_uq.diagnostics.esp import check_esp
 from esn_vla_uq.diagnostics.memory_capacity import (
-    MEMORY_CAPACITY_INPUT_DIM,
+    DEFAULT_MC_INPUT_CHANNEL,
     linear_memory_capacity,
 )
 from esn_vla_uq.diagnostics.report import (
@@ -77,13 +77,17 @@ def run_diagnostics(
     ``n_inputs=1`` は互換のための既定値であり、実データを fit する ESN の
     実際の `D_u` (例: `state` なら 8) に近づけたい場合は明示的に指定する。
 
-    メモリ容量診断はスカラー入力 (`D_u=1`) を要求する。``n_inputs == 1`` の
-    ときは上記と同じリザバーをそのまま使うが、``n_inputs != 1`` のときは
-    `spectral`/`esp` のリザバーとは別に `D_u=1` のリザバーを ``config`` から
-    改めて構築して測る (同じ `seed` でも `n_inputs` が違えば `W_in`/`b`/`W` は
-    別物になるため、一診断の都合でレポート全体のリザバーを決めない)。
-    どちらのリザバーで測ったかは `MemoryCapacityMeasurement.n_inputs`
-    (`DiagnosticsReport.memory_capacity.n_inputs`) に必ず記録する。
+    メモリ容量も**同じリザバー**で測る。定義が要求するのは駆動信号がスカラーで
+    あることなので、``n_inputs > 1`` のときは先頭チャンネルにだけ信号を流す
+    (`linear_memory_capacity` の ``input_channel``)。
+
+    **以前は `D_u=1` のリザバーを別に建てて測っていた。** 同じ `seed` でも
+    `n_inputs` が違えば `W_in`/`b` だけでなく `W` まで別物になるため
+    (`esn/reservoir.py`)、``--n-inputs 17`` のレポートには「17 次元入力の
+    リザバーのスペクトル半径」と「別のリザバーのメモリ容量」が並んでいた。
+    診断値と較正性能を突き合わせる用途ではこれが致命的になる
+    (`docs/next-research-directions.md` ②)。測定に使った入力次元と
+    チャンネルは `DiagnosticsReport.memory_capacity` に必ず記録する。
 
     Args:
         config: 診断対象の ESN ハイパーパラメータ。
@@ -103,16 +107,14 @@ def run_diagnostics(
 
     memory_capacity: MemoryCapacityMeasurement | None = None
     if not skip_memory_capacity:
-        memory_capacity_reservoir = (
-            reservoir
-            if n_inputs == MEMORY_CAPACITY_INPUT_DIM
-            else Reservoir(config, MEMORY_CAPACITY_INPUT_DIM)
-        )
         memory_capacity = MemoryCapacityMeasurement(
             result=linear_memory_capacity(
-                memory_capacity_reservoir, seed=diagnostics_seed
+                reservoir,
+                seed=diagnostics_seed,
+                input_channel=DEFAULT_MC_INPUT_CHANNEL,
             ),
-            n_inputs=MEMORY_CAPACITY_INPUT_DIM,
+            n_inputs=n_inputs,
+            input_channel=DEFAULT_MC_INPUT_CHANNEL,
         )
 
     return DiagnosticsReport(
