@@ -15,13 +15,29 @@ v0.1.0 が最初のリリースです。
   行列を `[1, u, x]` (既定) / `[1, x]` / `[1, u]` から選べる。`[1, u]` はリザバー
   無しの baseline で、この条件では**リザバーを構築も駆動もしない**
   (`uncertainty/conformal.py` が列数 0 の状態を渡す)
+
 - `ESNConfig.use_reservoir` と `RidgeReadout(use_states=)`。入力もリザバーも外す組は
   定数予測に退化するため `ValueError` にする
+
 - 較正レポートに `coverage.std_interval_width` と `coverage.per_split_interval_width`。
   **条件を変えた 2 本は同じ乱数種の同じ分割を見ているので、分割ごとの幅を引き算した
   対応のある差で比較できる。** 平均だけでは差が誤差の内か判定できなかった
+
 - `docs/design.md` 11 節と `docs/next-research-directions.md`。アブレーションの結果と、
   次に測ることの一覧
+
+- `calibrate --washout` と `run_calibration(washout=)`。較正経路で実際に効く washout を
+  外から動かせるようにした。**`ESNConfig.washout` とは別物**なので、実際に使った値を
+  レポートの `conformal.washout` に残す
+
+### Fixed
+
+- **`washout > 0` で失敗検知のラベルが区間と揃っていなかった。** 区間は washout 後の
+  行数で返るのにラベルは washout 前の行数で作られており、`IndexError` になる。長さが
+  たまたま一致すれば黙って別のステップと突き合わせていた。マスクを
+  `SplitConformalPredictor.retained_mask` として公開し、`calibration/runner.py` が
+  ラベルに同じマスクを掛ける。`run_calibration` から washout を渡す経路が無かったため
+  露呈していなかった
 
 ### Changed
 
@@ -39,6 +55,9 @@ v0.1.0 が最初のリリースです。
   最良化しないと比較の結論が逆に出る。既定値の見直しは別タスク
 - **失敗検知 AUROC は設計行列に依存しない** (3 条件で完全一致)。条件が変えるのは
   区間幅の定数倍だけで、AUROC は順位だけで決まるため
+- **初期過渡は「予測しづらい区間」ではなく最も予測しやすい区間だった。** エピソード
+  先頭 20 標本の非適合度はそれ以降の約半分 (比 0.518〜0.588)。washout を増やすと幅は
+  単調に広がる。ESN の定石 (過渡は捨てる) はこの予測タスクには当てはまらない
 
 ## [0.2.0] - 2026-08-04
 

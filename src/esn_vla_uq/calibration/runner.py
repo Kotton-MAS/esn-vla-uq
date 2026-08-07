@@ -32,7 +32,11 @@ from esn_vla_uq.calibration.report import (
 from esn_vla_uq.data.schema import RolloutDataset
 from esn_vla_uq.esn.config import ESNConfig
 from esn_vla_uq.provenance import DataSource
-from esn_vla_uq.uncertainty.conformal import DEFAULT_ALPHA, SplitConformalPredictor
+from esn_vla_uq.uncertainty.conformal import (
+    DEFAULT_ALPHA,
+    DEFAULT_WASHOUT,
+    SplitConformalPredictor,
+)
 from esn_vla_uq.uncertainty.nonconformity import DEFAULT_SCORE_KIND, ScoreKind
 from esn_vla_uq.uncertainty.split import (
     DEFAULT_SPLIT_STRATEGY,
@@ -159,15 +163,20 @@ def _evaluate_split(
     score_kind: ScoreKind,
     split_strategy: SplitStrategy,
     split_seed: int,
+    washout: int,
 ) -> _SplitOutcome:
     """1 つの分割で fit -> calibrate -> evaluate を行う。"""
     split = split_samples(samples, strategy=split_strategy, seed=split_seed)
-    predictor = SplitConformalPredictor(config, alpha=alpha, score_kind=score_kind)
+    predictor = SplitConformalPredictor(
+        config, alpha=alpha, score_kind=score_kind, washout=washout
+    )
     predictor.fit(split.fit).calibrate(split.calibrate)
 
     intervals = predictor.predict_intervals(split.test)
     targets = predictor.stacked_targets(split.test)
+    # ラベルは washout 前の行数で作られるので、区間と行を合わせてから使う。
     labels, label_kind = detection_labels(split.test)
+    labels = labels[predictor.retained_mask(split.test)]
     return _SplitOutcome(
         coverage=float(intervals.covers(targets).mean()),
         auroc=_maybe_auroc(intervals.uncertainty, labels),
@@ -192,6 +201,7 @@ def run_calibration(
     split_strategy: SplitStrategy = DEFAULT_SPLIT_STRATEGY,
     split_seed: int = 0,
     n_splits: int = DEFAULT_N_SPLITS,
+    washout: int = DEFAULT_WASHOUT,
     generated_at: str | None = None,
 ) -> CalibrationReport:
     """データセットに split conformal を掛けて較正レポートを組み立てる。
@@ -214,6 +224,10 @@ def run_calibration(
         split_strategy: 較正データの分割方針。
         split_seed: 分割の乱数種 (先頭)。
         n_splits: 評価する分割の数。1 なら単一分割。
+        washout: エピソードごとに先頭から捨てる標本数。**`ESNConfig.washout`
+            ではない。** あちらは `ESN.fit` の経路だけに効き、この経路は通らない
+            (`uncertainty/conformal.py` の `DEFAULT_WASHOUT`)。既定は 0 で、
+            初期過渡も「予測しづらい区間」として評価に含める。
         generated_at: タイムスタンプの明示指定 (テスト用)。
 
     Returns:
@@ -233,6 +247,7 @@ def run_calibration(
             score_kind=score_kind,
             split_strategy=split_strategy,
             split_seed=split_seed + offset,
+            washout=washout,
         )
         for offset in range(n_splits)
     ]
@@ -277,6 +292,9 @@ def run_calibration(
         "score_kind": score_kind,
         "n_splits": n_splits,
         "split_seed": split_seed,
+        # **この経路で実際に効く washout はこちらである。** レポートに載る
+        # `esn_config.washout` は `ESN.fit` 用の値で、較正では使われない (A3)。
+        "washout": washout,
     }
     return CalibrationReport(
         schema_version=CALIBRATION_SCHEMA_VERSION,

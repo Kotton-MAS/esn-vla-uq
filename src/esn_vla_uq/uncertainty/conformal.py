@@ -293,11 +293,20 @@ class SplitConformalPredictor:
         targets = stack_targets(samples)
         if self.washout == 0:
             return states, inputs, targets
-        keep = self._washout_mask(samples)
+        keep = self.retained_mask(samples)
         return states[keep], inputs[keep], targets[keep]
 
-    def _washout_mask(self, samples: Sequence[EpisodeSamples]) -> NDArray[np.bool_]:
-        """区間ごとに先頭 `washout` 標本を落とすマスクを作る。"""
+    def retained_mask(self, samples: Sequence[EpisodeSamples]) -> NDArray[np.bool_]:
+        """washout 適用後に残る標本を示す `[N]` を返す。
+
+        **区間ごとに先頭 `washout` 標本を落とす。** `washout=0` なら全て True。
+
+        呼び出し側が標本と行を対応させたい配列 (失敗検知のラベルなど) を持って
+        いるときは、それにこのマスクを掛ける必要がある。`predict_intervals` の
+        戻り値は washout 後の行数であり、`targets.detection_labels` が返す
+        ラベルは washout 前の行数である。**両者を突き合わせる前に揃えないと、
+        長さが違えば例外、たまたま同じなら黙って別のステップと突き合わせる。**
+        """
         masks: list[NDArray[np.bool_]] = []
         for sample in samples:
             mask = np.ones(sample.n_samples, dtype=np.bool_)

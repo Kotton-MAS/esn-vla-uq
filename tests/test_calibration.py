@@ -294,6 +294,46 @@ def test_cli_readout_ablation_is_recorded_in_the_report(tmp_path: Path) -> None:
     assert len(payload["coverage"]["per_split_interval_width"]) == 2
 
 
+def test_cli_washout_reaches_the_predictor(tmp_path: Path) -> None:
+    """`--washout` が実際に標本を減らし、レポートに残ること。
+
+    `esn_config.washout` は `ESN.fit` 用で較正経路では使われない。どちらの値で
+    評価したのかをレポート単体で読めないと、数値の出所を取り違える。
+    """
+    payloads = []
+    for washout in (0, 20):
+        output_dir = tmp_path / f"w{washout}"
+        exit_code = main(
+            [
+                "calibrate",
+                "--output-dir",
+                str(output_dir),
+                "--n-reservoir",
+                str(N_RESERVOIR),
+                "--n-splits",
+                "2",
+                "--washout",
+                str(washout),
+            ]
+        )
+        assert exit_code == 0
+        payloads.append(
+            json.loads(
+                next((output_dir / REPORT_SUBDIR).glob("*.json")).read_text(
+                    encoding="utf-8"
+                )
+            )
+        )
+
+    assert payloads[0]["conformal"]["washout"] == 0
+    assert payloads[1]["conformal"]["washout"] == 20
+    # 各エピソードの先頭 20 標本が落ちるのでテスト標本は必ず減る。
+    assert (
+        payloads[1]["coverage"]["n_test_samples"]
+        < payloads[0]["coverage"]["n_test_samples"]
+    )
+
+
 def test_cli_calibrate_writes_the_diagram_when_requested(tmp_path: Path) -> None:
     exit_code = main(
         [

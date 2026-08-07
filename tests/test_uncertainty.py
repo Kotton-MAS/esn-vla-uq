@@ -17,6 +17,7 @@ from esn_vla_uq.uncertainty import (
     split_samples,
     stack_failure_labels,
 )
+from esn_vla_uq.uncertainty.targets import detection_labels
 
 N_RESERVOIR = 60
 N_EPISODES = 24
@@ -458,3 +459,34 @@ def test_baseline_and_reservoir_predictions_differ(
         predictions.append(predictor.predict_intervals(split.test).predicted)
 
     assert not np.allclose(predictions[0], predictions[1])
+
+
+def test_retained_mask_matches_the_rows_of_predict_intervals(
+    dataset: RolloutDataset, config: ESNConfig
+) -> None:
+    """washout 後の行数とマスクの True 数が一致すること。
+
+    ここがずれると、失敗検知のラベルを区間と突き合わせるときに**長さが同じなら
+    黙って別のステップと比較する**。`calibration/runner.py` がこのマスクで
+    ラベルを揃えている。
+    """
+    washout = 20
+    split = split_samples(build_samples(dataset), seed=0)
+    predictor = SplitConformalPredictor(config, washout=washout).fit(split.fit)
+    predictor.calibrate(split.calibrate)
+
+    mask = predictor.retained_mask(split.test)
+    intervals = predictor.predict_intervals(split.test)
+    labels, _kind = detection_labels(split.test)
+
+    assert mask.shape == labels.shape
+    assert int(mask.sum()) == intervals.uncertainty.shape[0]
+    assert int(mask.sum()) == sum(s.n_samples - washout for s in split.test)
+
+
+def test_retained_mask_is_all_true_without_washout(
+    dataset: RolloutDataset, config: ESNConfig
+) -> None:
+    split = split_samples(build_samples(dataset), seed=0)
+    mask = SplitConformalPredictor(config).retained_mask(split.test)
+    assert mask.all()

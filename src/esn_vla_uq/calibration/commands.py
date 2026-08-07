@@ -34,7 +34,7 @@ from esn_vla_uq.esn.config import (
     ReadoutFeatures,
 )
 from esn_vla_uq.logging_paths import display_path
-from esn_vla_uq.uncertainty.conformal import DEFAULT_ALPHA
+from esn_vla_uq.uncertainty.conformal import DEFAULT_ALPHA, DEFAULT_WASHOUT
 from esn_vla_uq.uncertainty.nonconformity import (
     DEFAULT_SCORE_KIND,
     SUPPORTED_SCORE_KINDS,
@@ -115,6 +115,16 @@ def add_calibrate_arguments(
         ),
     )
     parser.add_argument(
+        "--washout",
+        type=int,
+        default=DEFAULT_WASHOUT,
+        help=(
+            "エピソードごとに先頭から捨てる標本数。既定の 0 は初期過渡も"
+            "「予測しづらい区間」として評価に含める。ESNConfig.washout とは別物で、"
+            "較正経路に効くのはこちら (既定: %(default)s)"
+        ),
+    )
+    parser.add_argument(
         "--n-splits",
         type=int,
         default=DEFAULT_N_SPLITS,
@@ -148,6 +158,7 @@ class CalibrateOptions:
     spectral_radius: float
     leak_rate: float
     readout: ReadoutFeatures
+    washout: int
     n_splits: int
     diagram: bool
 
@@ -165,6 +176,7 @@ class CalibrateOptions:
             spectral_radius=options.get_float(args, "spectral_radius"),
             leak_rate=options.get_float(args, "leak_rate"),
             readout=options.get_choice(args, "readout", SUPPORTED_READOUT_FEATURES),
+            washout=options.get_int(args, "washout"),
             n_splits=options.get_int(args, "n_splits"),
             diagram=options.get_bool(args, "diagram"),
         )
@@ -204,6 +216,7 @@ def execute_calibrate(opts: CalibrateOptions) -> int:
         split_strategy=opts.split,
         split_seed=seed,
         n_splits=opts.n_splits,
+        washout=opts.washout,
     )
     report.log_summary()
     path = write_report(report, opts.output_dir)
