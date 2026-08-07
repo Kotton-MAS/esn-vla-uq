@@ -102,23 +102,26 @@ candidate for porting onto a physical reservoir later.
 
 Nominal coverage 90%, averaged over 20 calibration/test splits:
 
-| score        | interval width  | coverage      | mean half-width |
-| ------------ | --------------- | ------------- | --------------- |
-| `absolute`   | constant        | 0.903 ± 0.027 | 0.0525          |
-| `normalized` | varies per step | 0.903 ± 0.026 | **0.0486**      |
+| score        | interval width  | coverage        | ECE    | mean half-width |
+| ------------ | --------------- | --------------- | ------ | --------------- |
+| `absolute`   | constant        | 0.8945 ± 0.0309 | 0.0134 | 0.0432          |
+| `normalized` | varies per step | 0.8846 ± 0.0362 | 0.0269 | **0.0423**      |
 
-`normalized` matches `absolute`'s coverage with a narrower average interval, so it is
-the default.
+`normalized` gives a narrower average interval and a per-step uncertainty score, so it
+is the default. The coverage shortfall is smaller than one standard error of the
+split-to-split spread.
 
 ## Results on real openpi rollouts
 
 100 episodes from `libero_spatial` (10 trials per task), collected with
 `scripts/collect_openpi_rollouts.py` against a live `pi0_libero` policy server:
 
-| split         | coverage            | ECE    | mean half-width |
-| ------------- | ------------------- | ------ | --------------- |
-| `within_task` | **0.9033 ± 0.0102** | 0.0029 | 0.250           |
-| `across_task` | 0.8977 ± 0.0397     | 0.0020 | 0.297           |
+| suite / split                  | coverage            | ECE    | mean half-width |
+| ------------------------------ | ------------------- | ------ | --------------- |
+| `libero_spatial` `within_task` | **0.9019 ± 0.0089** | 0.0022 | 0.195           |
+| `libero_spatial` `across_task` | 0.8906 ± 0.0486     | 0.0055 | 0.237           |
+| `libero_10` `within_task`      | 0.9044 ± 0.0240     | 0.0065 | 0.363           |
+| `libero_10` `across_task`      | **0.7929 ± 0.1033** | 0.0797 | 0.590           |
 
 **Coverage holds on real data across four collections.** With 10 episodes it was
 0.881 ± 0.049; with 100 the spread shrank about 5x — exactly what the "effective sample
@@ -126,7 +129,7 @@ size is the number of episodes" argument predicts.
 
 **`across_task` breaks down on long-horizon tasks**, which is what the exchangeability
 argument predicts: calibration and test come from different task distributions, so the
-guarantee does not transfer. On `libero_10` it drops to 0.779 with 17x the ECE. This is
+guarantee does not transfer. On `libero_10` it drops to 0.793 with 12x the ECE. This is
 why `within_task` is the default.
 
 **Collection is not reproducible.** pi0 samples its actions (flow matching), so the same
@@ -166,7 +169,16 @@ Two things follow, both of which cost us a hypothesis:
   also scales the input drive — a path that does not appear in `rho(A)` (§13.5).
 
 The one finding that transferred across suites was a hyperparameter, not a diagnostic:
-**a non-leaky reservoir (`leak_rate=1.0`) was the worst setting in both suites** (§13.8).
+a non-leaky reservoir (`leak_rate=1.0`) was the worst setting in both suites (§13.8) —
+**but only at the regularisation strengths swept there.** Widen the sweep to include
+`ridge_alpha=1`, and the direction of the leak-rate effect reverses (§15.3). The two
+hyperparameters do not act independently; a sweep over one of them does not tell you
+which way the other should go.
+
+The defaults (`leak_rate=0.7`, `ridge_alpha=1.0`) were picked to be the least-bad
+compromise across four datasets rather than the best on any one of them: no setting is
+good everywhere, and even this one is 24% off the per-dataset optimum somewhere (§15).
+**Treat them as a starting point, not as tuned values.**
 
 ## Scope
 

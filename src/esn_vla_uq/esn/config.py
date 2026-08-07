@@ -10,6 +10,12 @@
 - ``leak_rate``: リーク率 a (1.0 で非リーク型に退化する)
 - ``density``: W の非零要素の割合 (疎行列は密行列 + マスクで表現する)
 - ``ridge_alpha``: リッジ read-out の正則化強度 lambda
+
+``leak_rate`` と ``ridge_alpha`` の既定値は `docs/design.md` 15 節の選定による。
+4 データセット (合成・libero_spatial・libero_10 x 2) で 25 通りを掃引し、
+**どのデータでも最良から最も離れない組**を選んだ (ミニマックス)。単一のデータでの
+最良値ではない。**この 2 つは独立に効かない**ので、片方だけを動かすときは
+15.3 節を読むこと。
 - ``washout``: 学習・評価から捨てる先頭ステップ数
 - ``input_passthrough``: read-out の設計行列に入力 u を含めるか (既定で有効)
 - ``use_reservoir``: read-out の設計行列にリザバー状態 x を含めるか (既定で有効)
@@ -31,9 +37,9 @@ DEFAULT_N_RESERVOIR = 200
 DEFAULT_SPECTRAL_RADIUS = 0.9
 DEFAULT_INPUT_SCALING = 1.0
 DEFAULT_BIAS_SCALING = 0.0
-DEFAULT_LEAK_RATE = 1.0
+DEFAULT_LEAK_RATE = 0.7
 DEFAULT_DENSITY = 0.1
-DEFAULT_RIDGE_ALPHA = 1e-6
+DEFAULT_RIDGE_ALPHA = 1.0
 DEFAULT_WASHOUT = 100
 DEFAULT_INPUT_PASSTHROUGH = True
 DEFAULT_USE_RESERVOIR = True

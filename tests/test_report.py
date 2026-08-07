@@ -175,9 +175,21 @@ def test_to_dict_is_json_serializable(report: DiagnosticsReport) -> None:
 def test_spectral_summary_matches_reservoir(config: ESNConfig) -> None:
     summary = summarize_spectral(Reservoir(config, 1))
     assert summary.spectral_radius == pytest.approx(config.spectral_radius, rel=1e-8)
-    # leak_rate=1.0 では実効更新行列は W に退化する。
-    assert summary.effective_spectral_radius == pytest.approx(
-        summary.spectral_radius, rel=1e-12
+
+
+def test_effective_spectral_radius_degenerates_only_without_leak() -> None:
+    """`leak_rate=1.0` のときだけ実効更新行列が `W` に退化する。
+
+    既定のリーク率は 1.0 ではない (`docs/design.md` 15 節) ため、既定設定では
+    `rho(A) != rho(W)` になる。両者を混同すると診断値の読み違いになる。
+    """
+    non_leaky = summarize_spectral(Reservoir(ESNConfig(leak_rate=1.0, seed=0), 1))
+    assert non_leaky.effective_spectral_radius == pytest.approx(
+        non_leaky.spectral_radius, rel=1e-12
+    )
+    leaky = summarize_spectral(Reservoir(ESNConfig(leak_rate=0.5, seed=0), 1))
+    assert leaky.effective_spectral_radius != pytest.approx(
+        leaky.spectral_radius, rel=1e-6
     )
 
 
