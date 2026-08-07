@@ -159,6 +159,7 @@ class SplitConformalPredictor:
         readout = RidgeReadout(
             alpha=self.config.ridge_alpha,
             input_passthrough=self.config.input_passthrough,
+            use_states=self.config.use_reservoir,
         )
         readout.fit(states, inputs, targets)
         residuals = targets - readout.predict(states, inputs)
@@ -274,13 +275,21 @@ class SplitConformalPredictor:
         """リザバー状態・入力・目標を、washout 適用後に連結して返す。
 
         リザバーはエピソード境界で初期化する (`run_episodes`)。
+
+        `ESNConfig.use_reservoir=False` (リザバー無し baseline) のときは
+        **リザバーを構築も駆動もしない。** 状態の代わりに列数 0 の `[T, 0]` を
+        返す。read-out もスコアモデルも状態を使わないので、`O(T N^2)` の駆動が
+        丸ごと不要になる。形だけ合わせておけば下流は分岐しなくて済む。
         """
         if not samples:
             raise ValueError("samples: 1 件以上必要です")
         segments = input_segments(samples)
-        reservoir = self._ensure_reservoir(segments[0].shape[1])
-        states = run_episodes(reservoir, segments)
         inputs = np.concatenate(segments, axis=0)
+        if self.config.use_reservoir:
+            reservoir = self._ensure_reservoir(segments[0].shape[1])
+            states = run_episodes(reservoir, segments)
+        else:
+            states = np.zeros((inputs.shape[0], 0), dtype=np.float64)
         targets = stack_targets(samples)
         if self.washout == 0:
             return states, inputs, targets

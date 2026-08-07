@@ -47,8 +47,13 @@ from esn_vla_uq.provenance import SYNTHETIC_DATA_SOURCE, DataSource
 
 logger = logging.getLogger(__name__)
 
-REPORT_SCHEMA_VERSION: Final[str] = "0.2.0"
+REPORT_SCHEMA_VERSION: Final[str] = "0.3.0"
 """診断レポート JSON のスキーマバージョン。
+
+0.3.0 での変更: `esn_config` に `use_reservoir` が加わった (read-out の設計行列に
+リザバー状態を載せるか。`docs/next-research-directions.md` ①)。診断そのものは
+read-out を使わないためこの値で数値は変わらないが、`esn_config` は
+`ESNConfig` 全フィールドを機械的に写す契約 (A2) なので追加は現れる。
 
 0.2.0 での変更: `memory_capacity` の測定コンテキスト (`n_inputs` / `reservoir`)
 を `memory_capacity` オブジェクトの内側へ移し、トップレベルの

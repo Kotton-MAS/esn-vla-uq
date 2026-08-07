@@ -26,6 +26,11 @@ class ESN:
     リザバーは最初に入力が与えられた時点で `ESNConfig.seed` から構築される。
     構築は入力次元 `n_inputs` にのみ依存するため、同一 seed・同一入力次元なら
     `fit` / `transform` の呼び出し順に依らず同じ行列になる。
+
+    `ESNConfig.use_reservoir=False` のときも `transform` はリザバーを駆動する
+    (状態を返すのが `transform` の契約であるため)。read-out が状態を使わなく
+    なるだけで、計算は省かれない。リザバー無し baseline を**安く**回したい場合は
+    `uncertainty/conformal.py` の経路を使う (そちらは駆動自体を飛ばす)。
     """
 
     def __init__(
@@ -35,7 +40,9 @@ class ESN:
         self._activation = activation
         self._reservoir: Reservoir | None = None
         self._readout = RidgeReadout(
-            config.ridge_alpha, input_passthrough=config.input_passthrough
+            config.ridge_alpha,
+            input_passthrough=config.input_passthrough,
+            use_states=config.use_reservoir,
         )
         self._targets_were_1d = False
 

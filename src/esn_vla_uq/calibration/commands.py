@@ -27,8 +27,11 @@ from esn_vla_uq.cli.inputs import load_rollouts
 from esn_vla_uq.esn.config import (
     DEFAULT_LEAK_RATE,
     DEFAULT_N_RESERVOIR,
+    DEFAULT_READOUT_FEATURES,
     DEFAULT_SPECTRAL_RADIUS,
+    SUPPORTED_READOUT_FEATURES,
     ESNConfig,
+    ReadoutFeatures,
 )
 from esn_vla_uq.logging_paths import display_path
 from esn_vla_uq.uncertainty.conformal import DEFAULT_ALPHA
@@ -102,6 +105,16 @@ def add_calibrate_arguments(
         help="リーク率 (既定: %(default)s)",
     )
     parser.add_argument(
+        "--readout",
+        choices=SUPPORTED_READOUT_FEATURES,
+        default=DEFAULT_READOUT_FEATURES,
+        help=(
+            "read-out の設計行列。input_reservoir は [1, u, x]、reservoir_only は "
+            "[1, x]、input_only は [1, u] (リザバー無しの baseline) "
+            "(既定: %(default)s)"
+        ),
+    )
+    parser.add_argument(
         "--n-splits",
         type=int,
         default=DEFAULT_N_SPLITS,
@@ -134,6 +147,7 @@ class CalibrateOptions:
     n_reservoir: int
     spectral_radius: float
     leak_rate: float
+    readout: ReadoutFeatures
     n_splits: int
     diagram: bool
 
@@ -150,6 +164,7 @@ class CalibrateOptions:
             n_reservoir=options.get_int(args, "n_reservoir"),
             spectral_radius=options.get_float(args, "spectral_radius"),
             leak_rate=options.get_float(args, "leak_rate"),
+            readout=options.get_choice(args, "readout", SUPPORTED_READOUT_FEATURES),
             n_splits=options.get_int(args, "n_splits"),
             diagram=options.get_bool(args, "diagram"),
         )
@@ -170,10 +185,13 @@ def execute_calibrate(opts: CalibrateOptions) -> int:
         終了コード (成功時 0)。
     """
     seed = opts.seed
+    input_passthrough, use_reservoir = ESNConfig.readout_flags(opts.readout)
     config = ESNConfig(
         n_reservoir=opts.n_reservoir,
         spectral_radius=opts.spectral_radius,
         leak_rate=opts.leak_rate,
+        input_passthrough=input_passthrough,
+        use_reservoir=use_reservoir,
         seed=seed,
     )
     dataset = load_rollouts(opts.input)
@@ -194,12 +212,14 @@ def execute_calibrate(opts: CalibrateOptions) -> int:
         _write_diagram(report.reliability, opts.output_dir, report.data_source)
 
     logger.info(
-        "calibrate done: score_kind=%s split=%s coverage=%.4f±%.4f "
-        "auroc=%.4f report=%s",
+        "calibrate done: readout=%s score_kind=%s split=%s coverage=%.4f±%.4f "
+        "width=%.4f auroc=%.4f report=%s",
+        config.readout_features,
         report.conformal["score_kind"],
         report.split["strategy"],
         report.coverage.mean,
         report.coverage.std,
+        report.coverage.mean_interval_width,
         report.detection.mean_auroc,
         display_path(path),
     )

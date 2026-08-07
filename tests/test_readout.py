@@ -60,11 +60,45 @@ def test_design_matrix_without_passthrough_omits_inputs(
     assert np.array_equal(design[:, 1:], states)
 
 
-@pytest.mark.parametrize("passthrough", [True, False])
-def test_n_features_matches_design_matrix(
-    states: NDArray[np.float64], inputs: NDArray[np.float64], passthrough: bool
+def test_design_matrix_without_states_omits_reservoir(
+    states: NDArray[np.float64], inputs: NDArray[np.float64]
 ) -> None:
-    readout = RidgeReadout(1e-6, input_passthrough=passthrough)
+    """リザバー無し baseline は `[1, u]` になる (アブレーションの対照条件)。"""
+    readout = RidgeReadout(1e-6, use_states=False)
+    design = readout.design_matrix(states, inputs)
+    assert design.shape == (N_STEPS, 1 + N_INPUTS)
+    assert np.array_equal(design[:, 0], np.ones(N_STEPS))
+    assert np.array_equal(design[:, 1:], inputs)
+
+
+def test_design_matrix_without_states_accepts_zero_width_states(
+    inputs: NDArray[np.float64],
+) -> None:
+    """状態を使わないときは列数 0 の `[T, 0]` を渡してよい。
+
+    `uncertainty/conformal.py` がリザバーを駆動せずにこの形を渡す。
+    """
+    empty = np.zeros((N_STEPS, 0))
+    readout = RidgeReadout(1e-6, use_states=False)
+    assert readout.design_matrix(empty, inputs).shape == (N_STEPS, 1 + N_INPUTS)
+
+
+def test_both_features_disabled_is_rejected() -> None:
+    """設計行列がバイアス列だけになる組は作らせない。"""
+    with pytest.raises(ValueError, match="同時に False"):
+        RidgeReadout(1e-6, input_passthrough=False, use_states=False)
+
+
+@pytest.mark.parametrize(
+    ("passthrough", "use_states"), [(True, True), (False, True), (True, False)]
+)
+def test_n_features_matches_design_matrix(
+    states: NDArray[np.float64],
+    inputs: NDArray[np.float64],
+    passthrough: bool,
+    use_states: bool,
+) -> None:
+    readout = RidgeReadout(1e-6, input_passthrough=passthrough, use_states=use_states)
     design = readout.design_matrix(states, inputs)
     assert readout.n_features(N_INPUTS, N_RESERVOIR) == design.shape[1]
 

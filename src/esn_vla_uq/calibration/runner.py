@@ -253,6 +253,10 @@ def run_calibration(
         mean_interval_width=float(
             np.mean([outcome.mean_width for outcome in outcomes])
         ),
+        std_interval_width=float(np.std([outcome.mean_width for outcome in outcomes])),
+        per_split_interval_width=tuple(
+            float(outcome.mean_width) for outcome in outcomes
+        ),
     )
     detection = DetectionSummary(
         mean_auroc=float(aurocs.mean()) if measured else None,

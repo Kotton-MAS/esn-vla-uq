@@ -403,3 +403,58 @@ def test_detection_auroc_is_invariant_to_the_difficulty_spread(
         scores.append(detection_auroc(intervals.uncertainty, labels))
 
     assert scores[0] == pytest.approx(scores[1], abs=1e-12)
+
+
+# --- リザバーの寄与のアブレーション (docs/next-research-directions.md ①) ------
+
+
+def test_baseline_without_reservoir_does_not_build_one(
+    dataset: RolloutDataset,
+) -> None:
+    """`use_reservoir=False` ではリザバーを構築も駆動もしないこと。
+
+    幅の比較のために baseline を回すのに `O(T N^2)` を払う必要は無い。状態は
+    列数 0 の `[T, 0]` で代用する。
+    """
+    baseline = ESNConfig(n_reservoir=N_RESERVOIR, seed=0, use_reservoir=False)
+    split = split_samples(build_samples(dataset), seed=0)
+    predictor = SplitConformalPredictor(baseline)
+    states, inputs, _targets = predictor._design(split.fit)
+
+    assert states.shape == (inputs.shape[0], 0)
+    assert predictor._reservoir is None
+
+
+def test_baseline_without_reservoir_produces_usable_intervals(
+    dataset: RolloutDataset,
+) -> None:
+    """baseline でも fit -> calibrate -> predict が一通り通ること。"""
+    baseline = ESNConfig(n_reservoir=N_RESERVOIR, seed=0, use_reservoir=False)
+    split = split_samples(build_samples(dataset), seed=0)
+    predictor = SplitConformalPredictor(baseline).fit(split.fit)
+    predictor.calibrate(split.calibrate)
+    intervals = predictor.predict_intervals(split.test)
+    targets = predictor.stacked_targets(split.test)
+
+    assert intervals.predicted.shape == targets.shape
+    assert np.all(np.isfinite(intervals.half_width))
+    assert np.all(intervals.lower <= intervals.upper)
+
+
+def test_baseline_and_reservoir_predictions_differ(
+    dataset: RolloutDataset, config: ESNConfig
+) -> None:
+    """アブレーションが実際に別のモデルを作っていること。
+
+    ここが同一になるなら、区間幅を比べても条件間の差は測れない。
+    """
+    baseline = ESNConfig(n_reservoir=N_RESERVOIR, seed=0, use_reservoir=False)
+    split = split_samples(build_samples(dataset), seed=0)
+
+    predictions = []
+    for candidate in (config, baseline):
+        predictor = SplitConformalPredictor(candidate).fit(split.fit)
+        predictor.calibrate(split.calibrate)
+        predictions.append(predictor.predict_intervals(split.test).predicted)
+
+    assert not np.allclose(predictions[0], predictions[1])

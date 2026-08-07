@@ -262,6 +262,38 @@ def test_cli_calibrate_writes_a_report(tmp_path: Path) -> None:
     assert payload["split"]["strategy"] == "within_task"
 
 
+def test_cli_readout_ablation_is_recorded_in_the_report(tmp_path: Path) -> None:
+    """`--readout input_only` がリザバー無し baseline としてレポートに残ること。
+
+    幅を条件間で比べるとき、レポート単体でどの条件の数値か分かる必要がある
+    (`docs/next-research-directions.md` ①)。
+    """
+    exit_code = main(
+        [
+            "calibrate",
+            "--output-dir",
+            str(tmp_path),
+            "--n-reservoir",
+            str(N_RESERVOIR),
+            "--n-splits",
+            "2",
+            "--readout",
+            "input_only",
+        ]
+    )
+    assert exit_code == 0
+    payload = json.loads(
+        next((tmp_path / REPORT_SUBDIR).glob("*.json")).read_text(encoding="utf-8")
+    )
+    assert payload["esn_config"]["use_reservoir"] is False
+    assert payload["esn_config"]["input_passthrough"] is True
+    assert payload["coverage"]["mean_interval_width"] > 0.0
+    # 条件間で幅を比べるには散らばりが要る (差が誤差の内かを判定できない)。
+    assert payload["coverage"]["std_interval_width"] >= 0.0
+    # 対応のある差を取るために分割ごとの幅も残す。
+    assert len(payload["coverage"]["per_split_interval_width"]) == 2
+
+
 def test_cli_calibrate_writes_the_diagram_when_requested(tmp_path: Path) -> None:
     exit_code = main(
         [

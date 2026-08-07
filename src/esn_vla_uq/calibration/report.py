@@ -23,8 +23,17 @@ from esn_vla_uq.provenance import SYNTHETIC_DATA_SOURCE, DataSource
 
 logger = logging.getLogger(__name__)
 
-CALIBRATION_SCHEMA_VERSION: Final[str] = "0.1.0"
-"""較正レポート JSON のスキーマバージョン。"""
+CALIBRATION_SCHEMA_VERSION: Final[str] = "0.2.0"
+"""較正レポート JSON のスキーマバージョン。
+
+0.2.0 での変更: `coverage` に `std_interval_width` と `per_split_interval_width`
+が加わり、`esn_config` に `use_reservoir` が加わった。**`use_reservoir` が false の
+レポートはリザバー無し baseline の数値である** (`[1, u]` のリッジ回帰)。区間幅を
+比較するときに条件を取り違えないよう、レポート単体で読めるようにしてある
+(`docs/next-research-directions.md` ①)。このときリザバーは構築すらされないので、
+同じ `esn_config` に載る `n_reservoir` / `spectral_radius` / `leak_rate` は
+**数値に影響していない** (A3 と同じ「効かないのに記録される」パラメータである)。
+"""
 
 REPORT_SUBDIR: Final[str] = "calibration"
 """`--output-dir` 配下の書き出し先サブディレクトリ。"""
@@ -86,6 +95,15 @@ class CoverageSummary:
         n_test_samples: 1 分割あたりのテスト標本数 (ステップ、平均)。
         n_test_episodes: 1 分割あたりのテストエピソード数 (平均)。
         mean_interval_width: 区間半幅の平均 (次元方向 max を取ったもの)。
+        std_interval_width: 区間半幅の平均の**分割間**標準偏差。条件を変えた
+            ときの幅の差が意味を持つかは、この散らばりと比べて初めて言える
+            (`docs/next-research-directions.md` ①②)。被覆率に `std` を併記
+            するのと同じ理由である。
+        per_split_interval_width: 分割ごとの区間半幅の平均。条件を変えた 2 本の
+            レポートは**同じ乱数種の同じ分割**を見ているため、この列同士を
+            引き算した**対応のある差**で比べられる。分割間の散らばりは条件間で
+            共通の成分 (どのエピソードがテストに入ったか) を含んでおり、
+            `std_interval_width` 同士を見比べるより桁違いに鋭い。
     """
 
     nominal: float
@@ -98,11 +116,14 @@ class CoverageSummary:
     n_test_samples: int
     n_test_episodes: int
     mean_interval_width: float
+    std_interval_width: float
+    per_split_interval_width: tuple[float, ...]
 
     def to_dict(self) -> dict[str, object]:
         """JSON シリアライズ可能な辞書へ変換する。"""
         payload = asdict(self)
         payload["per_split"] = list(self.per_split)
+        payload["per_split_interval_width"] = list(self.per_split_interval_width)
         return payload
 
 
@@ -165,7 +186,7 @@ class CalibrationReport:
         )
         logger.info(
             "coverage: nominal=%.4f mean=%.4f std=%.4f range=[%.4f, %.4f] "
-            "n_splits=%d n_test_episodes=%d mean_half_width=%.6f",
+            "n_splits=%d n_test_episodes=%d mean_half_width=%.6f±%.6f",
             self.coverage.nominal,
             self.coverage.mean,
             self.coverage.std,
@@ -174,6 +195,7 @@ class CalibrationReport:
             self.coverage.n_splits,
             self.coverage.n_test_episodes,
             self.coverage.mean_interval_width,
+            self.coverage.std_interval_width,
         )
         logger.info(
             "reliability: ece=%.4f max_calibration_error=%.4f n_levels=%d",

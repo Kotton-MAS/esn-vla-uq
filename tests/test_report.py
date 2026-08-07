@@ -163,6 +163,7 @@ def test_to_dict_contains_all_sections(report: DiagnosticsReport) -> None:
         "ridge_alpha",
         "washout",
         "input_passthrough",
+        "use_reservoir",
         "seed",
     }
 
