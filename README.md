@@ -168,6 +168,33 @@ Two things follow, both of which cost us a hypothesis:
   effective spectral radius can differ 2–3x in memory capacity, because the leak rate
   also scales the input drive — a path that does not appear in `rho(A)` (§13.5).
 
+### Is the task memoryless, or is the ESN a bad memory?
+
+Neither of the two ablations above answers that. A third one does: add a plain delay
+line `u[t-1], …, u[t-k]` to the pass-through and see whether it helps
+(`calibrate --input-lags k`, §16). Mean half-width:
+
+| `k`          | synthetic  | `libero_spatial` | `libero_10` |
+| ------------ | ---------- | ---------------- | ----------- |
+| 0 (`[1, u]`) | 0.0250     | **0.1957**       | 0.3446      |
+| 5            | **0.0048** | 0.2312           | **0.2876**  |
+| reservoir    | 0.0431     | 0.2162           | 0.3096      |
+
+**Where memory has value, a plain delay line beats the reservoir.** On the synthetic
+data one lag cuts the width 4.4x, and the reservoir is 9x wider than the delay line —
+worse even than having no memory at all. On `libero_10`, five lags give 16.5% and again
+beat the reservoir. On `libero_spatial` nothing helps: past inputs carry no value, and
+both the delay line and the reservoir lose to `[1, u]`.
+
+So the answer is (b), not (a): the task does want a little memory — about 5 steps
+(0.25 s) — **and the ESN is not the way to get it.** This also explains §11.6: what
+helped at small N was the extra read-out capacity, not the memory in it.
+
+**On this task, interval width does not justify the reservoir.** The value of the method
+is in the conformal layer, not in the recurrence. That does not refute the physical-
+reservoir motivation — it says a linear short-term memory sufficed here, so the setting
+where nonlinearity pays has yet to be found.
+
 The one finding that transferred across suites was a hyperparameter, not a diagnostic:
 a non-leaky reservoir (`leak_rate=1.0`) was the worst setting in both suites (§13.8) —
 **but only at the regularisation strengths swept there.** Widen the sweep to include

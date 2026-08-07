@@ -52,6 +52,60 @@ DEFAULT_WASHOUT: Final[int] = 0
 として意味を持つため、既定では捨てない。捨てたい場合は明示的に指定する。
 """
 
+DEFAULT_INPUT_LAGS: Final[int] = 0
+"""read-out の設計行列に足す入力のラグ数 (遅延埋め込み)。
+
+``k > 0`` にすると設計行列に ``u[t-1], ..., u[t-k]`` が加わる。**リザバー無しで
+これだけを足したものが「ただの遅延線」baseline** であり、リザバーが効かないときに
+その理由を切り分けるための対照になる (`docs/design.md` 16 節)。
+
+- 遅延を足しても幅が縮まない → **タスクが記憶を要求していない**。どんなリザバーでも
+  原理的に効かない。
+- 縮む → タスクは記憶を要求しており、**ESN という記憶の実装のほうに改善余地がある**。
+
+リザバーはこのラグを見ない (生の ``u`` で駆動する)。ラグは read-out の設計行列
+だけに入る。
+"""
+
+
+def lag_segments(
+    segments: Sequence[NDArray[np.float64]], n_lags: int
+) -> list[NDArray[np.float64]]:
+    """区間ごとに ``[u[t], u[t-1], ..., u[t-k]]`` を横に並べた配列を返す。
+
+    **エピソード境界を跨がない。** 区間の先頭では過去が存在しないので、その区間の
+    先頭値で埋める (端点保持)。
+
+    行を落とす選択もあるが、採らない。エピソード先頭は**最も予測しやすい区間**で
+    あり (`docs/design.md` 12.3 節)、そこを落とすと残った行の非適合度が上がって
+    幅が系統的に広がる。ラグを足した条件だけ行が減ると、その効果とラグの効果を
+    分離できなくなる。**全条件で同じ行を保つほうが比較として正しい。**
+
+    Args:
+        segments: 区間ごとの入力 `[T_i, D_u]`。
+        n_lags: 足すラグの数 ``k``。0 ならそのまま返す。
+
+    Returns:
+        区間ごとの `[T_i, D_u * (k + 1)]`。
+
+    Raises:
+        ValueError: `n_lags` が負の場合。
+    """
+    if n_lags < 0:
+        raise ValueError(f"n_lags: 0 以上が必要です (actual={n_lags})")
+    if n_lags == 0:
+        return list(segments)
+    lagged: list[NDArray[np.float64]] = []
+    for segment in segments:
+        blocks = [segment]
+        for lag in range(1, n_lags + 1):
+            shifted = np.empty_like(segment)
+            shifted[:lag] = segment[0]
+            shifted[lag:] = segment[:-lag]
+            blocks.append(shifted)
+        lagged.append(np.concatenate(blocks, axis=1))
+    return lagged
+
 
 @dataclass(frozen=True)
 class PredictionIntervals:
@@ -115,6 +169,7 @@ class SplitConformalPredictor:
         alpha: float = DEFAULT_ALPHA,
         score_kind: ScoreKind = DEFAULT_SCORE_KIND,
         washout: int = DEFAULT_WASHOUT,
+        input_lags: int = DEFAULT_INPUT_LAGS,
     ) -> None:
         if not 0.0 < alpha < 1.0:
             raise ValueError(
@@ -122,10 +177,13 @@ class SplitConformalPredictor:
             )
         if washout < 0:
             raise ValueError(f"washout: 0 以上が必要です (actual={washout})")
+        if input_lags < 0:
+            raise ValueError(f"input_lags: 0 以上が必要です (actual={input_lags})")
         self.config = config
         self.alpha = alpha
         self.score_kind = score_kind
         self.washout = washout
+        self.input_lags = input_lags
         self._reservoir: Reservoir | None = None
         self._readout: RidgeReadout | None = None
         self._score_model: ScoreModel | None = None
@@ -245,6 +303,7 @@ class SplitConformalPredictor:
             "nominal_coverage": 1.0 - self.alpha,
             "score_kind": self.score_kind,
             "washout": self.washout,
+            "input_lags": self.input_lags,
             "quantile": self.quantile,
             "n_calibration": self.n_calibration,
         }
@@ -284,12 +343,13 @@ class SplitConformalPredictor:
         if not samples:
             raise ValueError("samples: 1 件以上必要です")
         segments = input_segments(samples)
-        inputs = np.concatenate(segments, axis=0)
         if self.config.use_reservoir:
             reservoir = self._ensure_reservoir(segments[0].shape[1])
             states = run_episodes(reservoir, segments)
         else:
-            states = np.zeros((inputs.shape[0], 0), dtype=np.float64)
+            states = np.zeros((sum(s.shape[0] for s in segments), 0), dtype=np.float64)
+        # ラグはリザバーを駆動したあとで足す。リザバーは生の u だけを見る。
+        inputs = np.concatenate(lag_segments(segments, self.input_lags), axis=0)
         targets = stack_targets(samples)
         if self.washout == 0:
             return states, inputs, targets
